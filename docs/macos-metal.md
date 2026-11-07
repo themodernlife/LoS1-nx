@@ -85,6 +85,12 @@ under `out/metal-shader-errors/`. Those generated shaders stay local and ignored
 
 ## Validation on 2026-11-07
 
+The experiment was subsequently rebased onto fork `origin/main` at `71a12c5`.
+The ARM64 game build and the 8,192-pixel Metal validation test passed again, and
+the isolated app was repackaged with the latest icon and its existing configuration.
+The gameplay and Vulkan checks below describe the original prototype run; they
+were not repeated after the rebase.
+
 Apple M2, macOS 15.6, ARM64 release build:
 
 - Full application build succeeded.

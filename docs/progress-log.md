@@ -2,6 +2,24 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-07: rebase native Metal experiment onto fork main
+
+- Checkpointed the native Metal prototype, preserving its original state on
+  `codex/metal-before-main-rebase-20261107`, then rebased
+  `codex/dxmt-investigation` onto fork `origin/main` at `71a12c5`.
+  The experiment now tracks that fork branch instead of upstream main.
+- Kept the latest platform and DXC selection, unused-registration exclusion,
+  and app-icon packaging. Only the progress log required conflict resolution;
+  both histories were retained. The active main checkout's in-progress edits
+  were left untouched and are not included in this published-base rebase.
+- Rebuilt the ARM64 game and Metal test. The Metal API validation test checked
+  8,192 clear/draw pixels with zero failures. Confirmed the unused registration
+  callback stays out of the build and XenosRecomp receives ARM64 settings.
+- Repackaged the isolated Metal app. Its executable and runtime libraries match
+  the new build, the new icon is included, and the existing Metal configuration
+  and isolated save path are preserved. No new gameplay or benchmark run was
+  performed during this rebase; the earlier gameplay results remain historical.
+
 ## 2026-11-07: opt-in native Metal prototype
 
 - Resumed work at the user's request in `codex/dxmt-investigation`, isolated
