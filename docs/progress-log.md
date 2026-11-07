@@ -2,6 +2,22 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-07: move experimentation to the fork's main branch
+
+- Closed upstream draft PR #3 and the superseded fork draft PR #1 at the
+  user's request to experiment in `themodernlife/LoS1-nx` before proposing
+  upstream contributions. The existing macOS branches remain available.
+- Fast-forwarded `main` to the combined macOS support and usability work.
+  Local `origin` now names the fork and `upstream` names the original project;
+  `main` tracks `origin/main`, and Git pushes and GitHub CLI commands default
+  to the fork. The independent DXMT worktree was not incorporated.
+- Future upstream proposals should start from a fresh `upstream/main` branch
+  with selected changes cherry-picked or consolidated after checking their
+  dependencies. Use `main` for experiments; propose only the selected changes
+  upstream when the user requests a contribution.
+- This changes repository workflow and documentation only; no new build or
+  gameplay validation was performed.
+
 ## 2026-11-07: select application setup explicitly by target platform
 
 - Added explicit Switch, Windows, macOS, and Linux cases before renderer
