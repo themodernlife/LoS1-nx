@@ -190,8 +190,9 @@ refreshes, GPU execution time, or unique frames actually displayed. A stopped
 game-frame stream reads zero when the overlay continues to refresh.
 Keep the same scene, window size, resolution, shadows, pacing/vsync, and overlay visibility
 for each run; wait for loading and shader compilation to settle. This option
-does not uncap the game. Both current Mac paths reach Metal through Vulkan and
-MoltenVK; the separate DXMT investigation is not included.
+does not uncap the game. The default Renut and Xenos paths reach Metal through
+Vulkan and MoltenVK. For the opt-in native Metal path, see the
+[isolated Metal test build](macos-metal.md).
 
 To restore normal startup behavior, configure with
 `-DLOS_FPS_EXPERIMENT=OFF`, rebuild, and repackage. The existing `los_show_fps`

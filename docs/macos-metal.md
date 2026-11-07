@@ -21,7 +21,7 @@ independent. Follow [macOS setup](macos-build.md) for prerequisites and game dat
 
    ```sh
    cd /Users/themodernlife/Development/lords-of-shadow-dxmt-investigation
-   tools/macos/build.sh
+   LOS_FPS_EXPERIMENT=ON tools/macos/build.sh
    tools/macos/metal.sh smoke
    ```
 
@@ -42,6 +42,20 @@ Its configuration is `Contents/MacOS/los.toml` inside that app. It selects
 `renut_gpu_backend = "metal"` and puts saves in `out/metal-user-data/los`, including
 when launched from Finder. Packaging preserves an existing configuration.
 Close the app before rebuilding its package or changing backends.
+
+The build above enables the FPS overlay at every launch, even when an existing
+configuration has it disabled. It shows game FPS and average milliseconds per
+frame over half-second windows. The label is `Renut` for both native Metal and
+Vulkan; use the renderer log to confirm which backend is active. F5 opens the
+port menu, where the counter can be hidden for the current session.
+
+For an existing build, enable the overlay without changing the toolchain:
+
+```sh
+cmake -S app -B out/mac -DLOS_FPS_EXPERIMENT=ON
+cmake --build out/mac --target los -j 4
+tools/macos/metal.sh package
+```
 
 To test the Vulkan fallback using the same binary and isolated profile:
 
@@ -85,7 +99,13 @@ under `out/metal-shader-errors/`. Those generated shaders stay local and ignored
 
 ## Validation on 2026-11-07
 
-The experiment was subsequently rebased onto fork `origin/main` at `71a12c5`.
+The latest build includes fork main's FPS update at `95fc9d1` with
+`LOS_FPS_EXPERIMENT=ON`. The ARM64 build, 8,192-pixel test, and packaging passed.
+The FPS and average ms/frame overlay visibly updated during a windowed startup
+run, with logs confirming native Metal on Apple M2 and no new API validation
+failures. This did not repeat full gameplay or establish a performance comparison.
+
+An earlier rebase brought the experiment onto fork `origin/main` at `71a12c5`.
 The ARM64 game build and the 8,192-pixel Metal validation test passed again, and
 the isolated app was repackaged with the latest icon and its existing configuration.
 The gameplay and Vulkan checks below describe the original prototype run; they

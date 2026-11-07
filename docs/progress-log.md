@@ -2,6 +2,24 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-07: include the FPS overlay in the native Metal test app
+
+- Rebased `codex/dxmt-investigation` onto fork main's FPS update `95fc9d1`.
+  Preserved the previous branch at `codex/metal-before-fps-rebase-20261107`.
+  Resolved the build-script overlap by forwarding both the FPS and Metal
+  options, and retained both progress histories.
+- Configured the existing isolated build with `LOS_FPS_EXPERIMENT=ON`, rebuilt,
+  and repackaged. The existing toolchain, Metal backend selection, application
+  configuration, and isolated save path were preserved. Packaged executable
+  and runtime-library hashes match the rebuilt outputs.
+- Visually verified the FPS and average ms/frame overlay updating during
+  startup in windowed mode. Runtime logs confirm the experiment was enabled
+  and the renderer was native Metal on Apple M2. No new Metal API validation
+  failures appeared; the standalone test checked 8,192 pixels with zero failures.
+- Updated the native Metal build instructions to enable the overlay and
+  clarified that its `Renut` label also applies to the native Metal backend.
+  This was a startup overlay check, not a new gameplay benchmark.
+
 ## 2026-11-07: rebase native Metal experiment onto fork main
 
 - Checkpointed the native Metal prototype, preserving its original state on
