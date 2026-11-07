@@ -41,6 +41,12 @@ set(LOS_SOURCES
 # The game's Direct3D map and predicated render-target handling are in docs/renderer.md.
 # Kept optional so the SDK's emulated GPU remains available as a reference.
 option(LOS_RENUT_RENDERER "Build Renut's renderer (sa2_renderer = renut)" OFF)
+option(LOS_FPS_EXPERIMENT "Show the game FPS overlay at every launch for renderer comparisons" OFF)
+if(LOS_FPS_EXPERIMENT AND NOT LOS_RENUT_RENDERER)
+    message(FATAL_ERROR "LOS_FPS_EXPERIMENT requires LOS_RENUT_RENDERER=ON (includes both Renut and Xenos)")
+endif()
+set_property(SOURCE src/los_menu.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+             LOS_FPS_EXPERIMENT=$<BOOL:${LOS_FPS_EXPERIMENT}>)
 if(LOS_RENUT_RENDERER)
     list(APPEND LOS_SOURCES src/los_renut_glue.cpp src/los_resource_copies.cpp src/los_render_targets.cpp
          src/los_engine_vars.cpp

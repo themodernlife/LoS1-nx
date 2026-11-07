@@ -63,6 +63,10 @@
 
 using namespace renut::gpu;
 
+namespace los {
+void CountSwap();  // los_engine_vars.cpp: shared guest-frame counter, no renderer state changes
+}
+
 // sa2-nx: frames the game has presented (src/sa2_d3d_trace.cpp; the test recorder waits on it).
 extern std::atomic<uint64_t> g_sa2_game_frames;
 REXCVAR_DECLARE(bool, sa2_renut_gamma_ramp);  // sa2-nx (2026-10-20): backend/present.cpp
@@ -1445,7 +1449,17 @@ BANJO_RENUT_HOOK(sub_824A3B00, RingBufferDeviceAllocate_hook);  // D3D_RingBuffe
 BANJO_RENUT_HOOK_SHARED(sub_824A3D30, AllocateInlineData_hook);  // D3D_CDevice_AllocateInlineData [0x8222D240]
 BANJO_RENUT_HOOK(sub_824A4220, Sa2NewSegment_hook);  // SA2's ring segment allocator
 BANJO_RENUT_HOOK(sub_824A5278, D3DDevice_SetRingBufferParameters_hook);  // D3DDevice_SetRingBufferParameters [0x82657508]
-BANJO_RENUT_HOOK(sub_824AF2F8, D3DDevice_Swap_hook);  // D3DDevice_Swap [0x82287590]
+// Count Xenos at the same guest Swap boundary as Renut (whose PaceSwap counts it).
+// Keep the original Xenos function and PPC arguments intact; counting must not apply engine settings.
+REX_EXTERN(__imp__sub_824AF2F8);
+extern "C" REX_FUNC(sub_824AF2F8) {
+  if (::banjo::renut_gpu::Active()) {
+    ::rex::ppc::HostToGuestFunction<D3DDevice_Swap_hook>(ctx, base);
+  } else {
+    ::los::CountSwap();
+    __imp__sub_824AF2F8(ctx, base);
+  }
+}
 BANJO_RENUT_HOOK(sub_824A3E18, BlockOnFence_hook);  // D3D_CDevice_BlockOnFence [0x8228F558]
 BANJO_RENUT_HOOK_SHARED(sub_8249A408, CBlocker_Check_hook);  // D3D_CBlocker_Check [0x8264DCD0]
 BANJO_RENUT_HOOK(sub_824A5038, IsFencePending_hook);  // D3DDevice_IsFencePending [0x8228F650]

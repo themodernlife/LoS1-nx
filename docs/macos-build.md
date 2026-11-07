@@ -151,6 +151,50 @@ Vulkan installation when the bundled `vulkan/` directory is present.
 To omit Renut from a build, set `LOS_RENUT_RENDERER=OFF` when running the build
 helper and use `sa2_renderer = "xenos"` in the runtime configuration.
 
+### FPS comparison experiment
+
+For an already configured build, enable the launch-time overlay without
+changing the existing toolchain or deployment target:
+
+```sh
+cmake -S app -B out/mac -DLOS_FPS_EXPERIMENT=ON
+cmake --build out/mac --target los -j 4
+tools/macos/package.sh
+tools/macos/play.sh --sa2_renderer=renut --no-fullscreen
+```
+
+Quit the game completely, then compare the same scene with:
+
+```sh
+tools/macos/play.sh --sa2_renderer=xenos --no-fullscreen
+```
+
+For a fresh build, use `LOS_FPS_EXPERIMENT=ON tools/macos/build.sh`.
+The experiment requires `LOS_RENUT_RENDERER=ON`, which includes both renderers.
+It turns on the existing FPS overlay at every launch, even if a preserved
+`los.toml` has `los_show_fps = false`. F5 (Fn-F5 if macOS uses media keys)
+opens the port menu, where the counter can be hidden for that session.
+The experiment does not write settings automatically.
+
+Use windowed mode for the initial comparison: the local Xenos fullscreen
+smoke test produced a black window, while a windowed restart displayed the
+game and live counter. The cause of that fullscreen behavior is unresolved.
+
+The overlay names the selected renderer and shows **game FPS** over the last
+half second, plus average milliseconds per game frame. Both paths count guest
+Direct3D Swaps. This measures game-frame submission cadence, not monitor
+refreshes, GPU execution time, or unique frames actually displayed. A stopped
+game-frame stream reads zero when the overlay continues to refresh.
+Keep the same scene, window size, resolution, shadows, pacing/vsync, and overlay visibility
+for each run; wait for loading and shader compilation to settle. This option
+does not uncap the game. Both current Mac paths reach Metal through Vulkan and
+MoltenVK; the separate DXMT investigation is not included.
+
+To restore normal startup behavior, configure with
+`-DLOS_FPS_EXPERIMENT=OFF`, rebuild, and repackage. The existing `los_show_fps`
+setting then controls startup visibility again. The Mac build helper defaults
+the experiment to OFF unless its environment variable is set.
+
 Renut logs frame-rate and GPU timing every 10 seconds. For the Xenos renderer,
 temporarily set `present_painted_profile = true` to obtain comparable host
 presentation counts. Measure after loading and shader compilation finish,

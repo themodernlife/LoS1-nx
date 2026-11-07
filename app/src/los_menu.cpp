@@ -34,6 +34,8 @@
 #include <rex/ui/imgui_drawer.h>
 #include <rex/ui/keybinds.h>
 
+#include "renut_engine/gpu/banjo_renut_select.h"
+
 REXCVAR_DEFINE_STRING(los_shadows, "full", "LoS1",
                       "Shadows: full (the game's own), world (the world casts shadows, the characters do not), "
                       "characters (the characters cast shadows, the world does not), off (fastest). Changed from the "
@@ -74,6 +76,20 @@ std::filesystem::path g_config_path;
 constexpr float kScale = 2.0f;  // padding and widths (1.0 was too small in handheld)
 ImFont* g_font = nullptr;       // ImGui's default font at 26 px (twice its 13 px design, so it stays sharp)
 std::atomic<bool> g_open{false};
+
+// Desktop Renut links its own ImGui copy; the SDK drawer's current context
+// does not reach that copy on macOS. Draw app dialogs using the context that
+// owns their IO, then restore the app copy for Renut's independent overlay.
+class DialogContextScope {
+ public:
+  explicit DialogContextScope(ImGuiIO& io) : previous_(ImGui::GetCurrentContext()) {
+    ImGui::SetCurrentContext(io.Ctx);
+  }
+  ~DialogContextScope() { ImGui::SetCurrentContext(previous_); }
+
+ private:
+  ImGuiContext* previous_;
+};
 
 void SetShadows(const std::string& v) {
   rex::cvar::SetFlagByName("los_shadows", v);
@@ -178,17 +194,17 @@ void Label(const char* text) {
 // the game keeps the gamepad (GameReceivesGamepad). The UI thread draws it at the display's rate while it exists.
 class LosFpsDialog final : public rex::ui::ImGuiDialog {
  public:
-  explicit LosFpsDialog(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer) {}
+  explicit LosFpsDialog(rex::ui::ImGuiDrawer* drawer) : ImGuiDialog(drawer), last_swaps_(SwapCount()) {}
   void RequestClose() { Close(); }
 
  protected:
   void OnDraw(ImGuiIO& io) override {
-    (void)io;
+    DialogContextScope context(io);
     const auto now = std::chrono::steady_clock::now();
     const uint32_t swaps = SwapCount();
     const double dt = std::chrono::duration<double>(now - last_time_).count();
     if (dt >= 0.5) {
-      fps_ = first_ ? 0.0 : double(swaps - last_swaps_) / dt;
+      fps_ = double(swaps - last_swaps_) / dt;
       first_ = false;
       last_swaps_ = swaps;
       last_time_ = now;
@@ -200,10 +216,12 @@ class LosFpsDialog final : public rex::ui::ImGuiDialog {
                          ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_AlwaysAutoResize |
                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus)) {
       if (g_font) ImGui::PushFont(g_font, g_font->LegacySize);
+      ImGui::TextUnformatted(banjo::renut_gpu::Active() ? "Renut" : "Xenos");
       if (first_) {
-        ImGui::TextUnformatted("-- fps");
+        ImGui::TextUnformatted("Game: -- fps");
       } else {
-        ImGui::Text("%.1f fps", fps_);
+        ImGui::Text("Game: %.1f fps", fps_);
+        if (fps_ > 0.0) ImGui::Text("%.2f ms/frame (avg)", 1000.0 / fps_);
       }
       if (g_font) ImGui::PopFont();
     }
@@ -241,6 +259,7 @@ class LosMenuDialog final : public rex::ui::ImGuiDialog {
   }
 
   void OnDraw(ImGuiIO& io) override {
+    DialogContextScope context(io);
     // Large on purpose (Mark, 2026-10-29: the first build's text was hard to read in handheld): the text at
     // kScale of the overlay font, padding and spacing with it, the window most of the screen's width.
     const float s = kScale;
@@ -377,6 +396,12 @@ void AddMenuFont(ImFontAtlas* atlas) {
 // From LosApp::OnCreateDialogs: - and + together (Switch) or F5 (PC) opens and closes the menu.
 void RegisterMenu(rex::ui::ImGuiDrawer* drawer, const std::filesystem::path& config_path) {
   g_config_path = config_path;
+#if LOS_FPS_EXPERIMENT
+  // Applied after config loading so old los.toml files cannot silently hide the experiment.
+  // F5 can still hide it for this session; no config is written unless the player saves the menu.
+  rex::cvar::SetFlagByName("los_show_fps", "true");
+  REXLOG_INFO("[fps experiment] enabled at launch; measuring guest Swaps over 0.5-second windows");
+#endif
   if (REXCVAR_GET(los_show_fps)) ShowFps(drawer, true);
   rex::ui::RegisterBind("bind_los_menu", "F5", "Toggle the port menu (- and + on the Switch)", [drawer] {
     if (g_menu) {

@@ -319,9 +319,14 @@ void Run() {
 
 }  // namespace
 
+// Both renderer paths count guest Swaps; the Xenos path must not apply Renut's engine-variable writes.
+void CountSwap() {
+  g_swaps.fetch_add(1, std::memory_order_relaxed);
+}
+
 // From the Swap hook (sa2_renut_pacing.cpp, the game thread): the settings again, before the next frame.
 void EngineVarsOnSwap() {
-  g_swaps.fetch_add(1, std::memory_order_relaxed);
+  CountSwap();
   for (Active& a : g_active) {
     const uint32_t va = a.va.load(std::memory_order_acquire);
     if (!va) continue;

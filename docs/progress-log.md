@@ -2,6 +2,46 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-07: build-time FPS comparison experiment
+
+- `app/CMakeLists.txt`: added optional `LOS_FPS_EXPERIMENT` (default OFF),
+  scoped to the menu translation unit. ON requires the dual-renderer build
+  (`LOS_RENUT_RENDERER=ON`) and enables the counter at each launch, including
+  with preserved local configs. Normal builds retain the saved FPS preference.
+- `tools/macos/build.sh`: forwards the experiment environment variable to
+  CMake so fresh builds can select the same behavior.
+- `app/src/los_engine_vars.cpp`: extracted the existing atomic Swap increment
+  into `CountSwap`, allowing Xenos to count without applying Renut's per-Swap
+  engine-variable writes. Renut's existing counting point remains unchanged.
+- `app/src/renut_engine/gpu/d3d/hooks/device.cpp`: the existing Swap wrapper
+  now counts Xenos before calling the original guest function, preserving its
+  arguments and rendering path. Previously the FPS overlay stayed at zero on
+  Xenos because only Renut's `PaceSwap` advanced the shared counter. No guest
+  override address, generated code, or renderer selection was changed.
+- `app/src/los_menu.cpp`: labels the selected renderer, displays guest FPS and
+  average ms/frame, and initializes the baseline at dialog creation rather
+  than displaying an artificial zero for the first completed sample. Both
+  renderers use guest Swaps over half-second windows, not UI repaint counts.
+  Experiment startup enables the counter without writing the config.
+- Runtime validation exposed an existing macOS ImGui context mismatch: the
+  SDK drawer called the app's FPS dialog, whose executable-local ImGui copy
+  had no current context. The first run stalled at `SetNextWindowPos` (local
+  `out/pr-prep/fps-renut-startup-sample.txt`). Both app dialogs now select the
+  context from their supplied IO and restore the previous context on return.
+  Renut's independent overlay keeps its separate context.
+- `docs/macos-build.md`: documents enabling/disabling the experiment, switching
+  renderers without rebuilding, comparable conditions, and metric meaning.
+- Validation: Release ARM64 build and packaging passed; the existing empty
+  deployment target was preserved. Visually verified the Renut counter over
+  the Besieged Village pause screen and the Xenos counter over startup/loading
+  screens in windowed mode. Xenos fullscreen produced a black window; the
+  cause remains unresolved, and comparison commands use windowed mode.
+  F5 automation did not establish a successful menu toggle, so that interaction
+  remains unverified. These are overlay smoke tests, not gameplay benchmarks.
+  ON/OFF configure checks confirm only `los_menu.cpp` receives the experiment
+  definition; the local cache is left ON and packaged executable hashes match.
+  Existing `fpscr.h` compiler warnings remain. Shell syntax and diff checks pass.
+
 ## 2026-11-07: move experimentation to the fork's main branch
 
 - Closed upstream draft PR #3 and the superseded fork draft PR #1 at the
