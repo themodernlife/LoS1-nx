@@ -19,6 +19,7 @@
 #include "renut_engine/gpu/guest/guest_memory.h"
 #include "renut_engine/gpu/log.h"
 #include "renut_engine/gpu/backend/video.h"
+#include "renut_engine/gpu/backend/frame_trace.h"
 #include "renut_engine/gpu/banjo_renut_tuning.h"
 
 #include <rex/cvar.h>
@@ -158,6 +159,7 @@ void Run() {
   std::vector<Item> batch;
   for (;;) {
     {
+      frame_trace::Scope trace("render_queue_wait", "", 1000);
       std::unique_lock lock(g_mutex);
       g_render_waiting = true;
       if (WakeBatch() > 1) {
@@ -172,6 +174,7 @@ void Run() {
         break;
       batch.swap(g_queue);
     }
+    frame_trace::Scope batch_trace("render_batch", "", 1000);
     // banjo-nx (2026-10-19, render-thread proposal 19): one clock read per item (the end of one is the start of the
     // next). Its other half, one State().mutex hold across consecutive locked items, hung the emulator run at the
     // first loading screen (a game thread's hook waits on the lock while the render thread's next item waits on it):
@@ -427,6 +430,7 @@ uint64_t QueueFrame(std::function<void()> work) {
       g_done_cv.notify_all();
   });
   const auto waiting = std::chrono::steady_clock::now();
+  frame_trace::Scope queue_trace("guest_queue_wait", "", 1000);
   std::unique_lock lock(g_mutex);
   WakeForWaitLocked();  // sa2-nx (sa2_renut_wake_batch)
   ++g_done_waiters;  // sa2-nx (sa2_renut_done_notify_waiters)
@@ -436,6 +440,7 @@ uint64_t QueueFrame(std::function<void()> work) {
   --g_done_waiters;
   const uint64_t done = g_frames_done;
   lock.unlock();
+  queue_trace.Stop();
   const auto waited = std::chrono::steady_clock::now() - waiting;
   frame_stats::OnGameThreadWait(std::chrono::duration<double, std::milli>(waited).count());
   // banjo-nx (2026-10-19, banjo_late_input): this frame's slack (the game thread only: one Swap at a time).

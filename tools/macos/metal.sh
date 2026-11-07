@@ -16,6 +16,7 @@ case "${1:-play}" in
         mkdir -p "$REPO/out/metal-user-data"
         exec /usr/bin/open "$APP" --env "XDG_DATA_HOME=$REPO/out/metal-user-data" \
             --env "MTL_DEBUG_LAYER=${MTL_DEBUG_LAYER:-0}" \
+            --env "LOS_FRAME_TRACE=${LOS_FRAME_TRACE:-}" \
             --env "LOS_METAL_SHADER_DUMP=$REPO/out/metal-shader-errors" \
             --stdout "$REPO/out/metal-game-stdout.log" --stderr "$REPO/out/metal-game-stderr.log" --args "$@"
         ;;

@@ -4,6 +4,7 @@
  *          list management for the native renderer.
  */
 #include "renut_engine/gpu/backend/video.h"
+#include "renut_engine/gpu/backend/frame_trace.h"
 
 #include <cstdio>
 #include <mutex>
@@ -762,6 +763,7 @@ void WaitSlotLocked(VideoState &s, uint32_t slot) {
     return;
   NoteGpuDoneSeenLocked(slot, false);  // banjo-nx (2026-10-20): done already (seen now)
   {
+    frame_trace::Scope trace("gpu_slot_wait");
     render_thread::WaitScope wait;
     s.queue->waitForCommandFence(s.fences[slot].get());
   }
@@ -788,6 +790,7 @@ void WaitAllSubmitted(VideoState &s) {
 }
 
 void SubmitAndWaitLocked(VideoState &s) {
+  frame_trace::Scope trace("gpu_submit_wait");
   if (!s.list_open)
     return;
   const uint32_t cur = s.frame;
@@ -820,6 +823,7 @@ void SubmitAndWaitLocked(VideoState &s) {
 
 void SubmitAndAdvance(VideoState &s, plume::RenderCommandSemaphore *wait,
                       plume::RenderCommandSemaphore *signal) {
+  frame_trace::Scope trace("frame_submit_advance");
   const uint32_t cur = s.frame;
   if (s.list_open) {
     FinishRecordingLocked(s);

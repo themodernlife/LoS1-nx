@@ -90,7 +90,56 @@
      }
  
      MetalShader::~MetalShader() {
-@@ -2637,15 +2650,27 @@
+@@ -1941,7 +1954,7 @@
+         assert(layer != nullptr && "Cannot present without a valid layer.");
+ 
+         MetalAutoreleasePool releasePool;
+-        const MetalDrawable &drawable = drawables[textureIndex];
++        MetalDrawable &drawable = drawables[textureIndex];
+         assert(drawable.mtl != nullptr && "Cannot present without a valid drawable.");
+ 
+         // Create a new command buffer just for presenting
+@@ -1964,7 +1977,6 @@
+         });
+ 
+         presentBuffer->addCompletedHandler([drawableMtl, presentId, this](MTL::CommandBuffer* cmdBuffer) {
+-            currentAvailableDrawableIndex = (currentAvailableDrawableIndex + 1) % MAX_DRAWABLES;
+             drawableMtl->release();
+ 
+             {
+@@ -1975,6 +1987,12 @@
+         });
+ 
+         presentBuffer->commit();
++
++        // The completion handler owns the in-flight reference. Holding another
++        // reference in every slot until the next acquire can exhaust the layer's
++        // drawable pool: nextDrawable waits before the old slot is released.
++        drawable.mtl->release();
++        drawable.mtl = nullptr;
+ 
+         return true;
+     }
+@@ -2046,7 +2064,6 @@
+     bool MetalSwapChain::acquireTexture(RenderCommandSemaphore *signalSemaphore, uint32_t *textureIndex) {
+         assert(signalSemaphore != nullptr);
+         assert(textureIndex != nullptr);
+-        assert(*textureIndex < MAX_DRAWABLES);
+ 
+         // Create a command buffer just to encode the signal
+         MetalAutoreleasePool releasePool;
+@@ -2077,6 +2094,10 @@
+         drawable.mtl = nextDrawable;
+ 
+         drawable.mtl->retain();
++
++        // Slots belong to the acquiring thread. Advancing this from a GPU
++        // completion handler races with acquisition and can reuse the wrong slot.
++        currentAvailableDrawableIndex = (currentAvailableDrawableIndex + 1) % MAX_DRAWABLES;
+ 
+         return true;
+     }
+@@ -2637,15 +2658,27 @@
      }
  
      void MetalCommandList::setGraphicsDescriptorSet(RenderDescriptorSet *descriptorSet, uint32_t setIndex) {
@@ -122,7 +171,7 @@
      }
  
      void MetalCommandList::setGraphicsRootDescriptor(RenderBufferReference bufferReference, uint32_t rootDescriptorIndex) {
-@@ -2983,7 +3008,8 @@
+@@ -2983,7 +3016,8 @@
          assert(srcLocation.type != RenderTextureCopyType::UNKNOWN);
  
          MetalAutoreleasePool releasePool;
@@ -132,7 +181,7 @@
          checkActiveBlitEncoder();
          activeType = EncoderType::Blit;
  
-@@ -2991,6 +3017,21 @@
+@@ -2991,6 +3025,21 @@
          const MetalTexture *srcTexture = static_cast<const MetalTexture *>(srcLocation.texture);
          const MetalBuffer *dstBuffer = static_cast<const MetalBuffer *>(dstLocation.buffer);
          const MetalBuffer *srcBuffer = static_cast<const MetalBuffer *>(srcLocation.buffer);
@@ -154,7 +203,7 @@
  
          if (dstLocation.type == RenderTextureCopyType::SUBRESOURCE && srcLocation.type == RenderTextureCopyType::PLACED_FOOTPRINT) {
              assert(dstTexture != nullptr);
-@@ -3393,6 +3434,7 @@
+@@ -3393,6 +3442,7 @@
      }
  
      void MetalCommandList::checkForUpdatesInGraphicsState() {
@@ -162,7 +211,7 @@
          // Pipeline state - only update if the actual pipeline object changed
          if (dirtyGraphicsState.pipelineState) {
              if (activeRenderState && activeRenderState->renderPipelineState != stateCache.lastPipelineState) {
-@@ -3492,7 +3534,7 @@
+@@ -3492,7 +3542,7 @@
          // Descriptor sets
          if (dirtyGraphicsState.descriptorSets) {
              if (activeGraphicsPipelineLayout) {
@@ -171,7 +220,7 @@
              }
              dirtyGraphicsState.descriptorSets = 0;
              dirtyGraphicsState.descriptorSetDirtyIndex = MAX_DESCRIPTOR_SET_BINDINGS;
-@@ -3746,7 +3788,7 @@
+@@ -3746,7 +3796,7 @@
  
      MetalPipelineLayout::~MetalPipelineLayout() {}
  
@@ -180,7 +229,7 @@
          for (uint32_t i = startIndex; i < setLayoutCount; i++) {
              if (i >= descriptorSetCount || descriptorSets[i] == nullptr) {
                  continue;
-@@ -3758,6 +3800,31 @@
+@@ -3758,6 +3808,31 @@
              if (!usingResidencySets) {
                  // Track descriptor set for later resource binding
                  encoderDescriptorSets.insert(const_cast<MetalDescriptorSet*>(descriptorSet));

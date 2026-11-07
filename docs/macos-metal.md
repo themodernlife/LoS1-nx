@@ -89,13 +89,21 @@ under `out/metal-shader-errors/`. Those generated shaders stay local and ignored
 - The tracked `patches/renut-deps/plume-native-metal.patch` adds source-library
   shader construction, dynamic constant-buffer descriptors with per-draw argument
   snapshots, blend constants, texture-to-buffer readback, clear flushing before
-  blits, and texture-view usage/stencil-plane handling. Fetching dependencies
+  blits, texture-view usage/stencil-plane handling, and corrected drawable
+  ownership/slot advancement. Fetching dependencies
   applies it; macOS Metal CMake configuration also applies it to existing copies.
 - The standalone smoke test uses the same shader translation code as the game.
   It verifies a clear-only readback and two textured draws with different constant
   offsets and a sparse binding. All 8,192 output pixels must match.
 - The existing SDL Cocoa window/CAMetalLayer integration supplies native
   presentation without an additional window bridge.
+
+## Stutter diagnostics
+
+The opening-village investigation reproduced both drawable-acquisition waits and
+long gaps between guest frames. A drawable lifetime/index correction is included,
+but the before/after capture did not demonstrate a stutter fix. See the
+[measurements and opt-in capture instructions](macos-metal-stutter.md).
 
 ## Validation on 2026-11-07
 

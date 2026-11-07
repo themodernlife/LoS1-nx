@@ -19,6 +19,7 @@
 
 #include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/backend/gpu_profile.h"
+#include "renut_engine/gpu/backend/frame_trace.h"
 #include "renut_engine/gpu/render/draw.h"
 #include "renut_engine/gpu/render/textures.h"
 #include "renut_engine/gpu/log.h"
@@ -433,6 +434,7 @@ void PresentLocked(VideoState &s, const PresentImage *image) {
   plume::RenderCommandSemaphore *acquire = s.acquire_semaphores[s.frame].get();
   uint32_t image_index = 0;
   auto acquire_image = [&] {
+    frame_trace::Scope trace("drawable_acquire");
     render_thread::WaitScope wait;
     return s.swap_chain->acquireTexture(acquire, &image_index);
   };
@@ -492,6 +494,7 @@ void PresentLocked(VideoState &s, const PresentImage *image) {
   bool presented;
   {
     // With vsync the present can hold until the display takes a frame.
+    frame_trace::Scope trace("present_submit");
     render_thread::WaitScope wait;
     presented = s.swap_chain->present(image_index, waits, 1);
   }
@@ -575,6 +578,7 @@ int Video::PresentDone(uint64_t index) {
 }
 
 void Video::Present(const PresentImage *image) {
+  frame_trace::Scope trace("frame");
   auto &s = State();
   if (s.shutting_down.load(std::memory_order_acquire))
     return;

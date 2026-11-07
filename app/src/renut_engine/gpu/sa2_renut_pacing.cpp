@@ -14,6 +14,7 @@
 //     native renderer's relaxed vsync: 50-59 fps instead of a fall to 30);
 //   - off: waits for the next refresh of the 60 Hz grid, as fixed vsync does.
 #include "renut_engine/gpu/sa2_renut_pacing.h"
+#include "renut_engine/gpu/backend/frame_trace.h"
 
 #include <algorithm>
 #include <chrono>
@@ -154,6 +155,7 @@ void SleepUntil(Clock::time_point t) {
 uint64_t g_display_previous_ns = 0;
 
 void PaceSwap(uint32_t device_va) {
+  ::renut::gpu::frame_trace::Scope trace("guest_pace");
   static const bool on = REXCVAR_GET(sa2_renut_vblank_pacing);
   ::los::EngineVarsOnSwap();  // los1-nx (2026-10-28): the engine variables set from los.toml
   if (!on || !device_va) return;

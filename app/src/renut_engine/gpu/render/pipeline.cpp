@@ -2,6 +2,7 @@
  * @file    gpu/render/pipeline.cpp
  */
 #include "renut_engine/gpu/render/pipeline.h"
+#include "renut_engine/gpu/backend/frame_trace.h"
 
 #include <algorithm>
 #include <atomic>
@@ -275,6 +276,7 @@ namespace {
 
 // Any thread: reads only what device creation set up.
 std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const PipelineInputs &inputs) {
+  frame_trace::Scope trace("pipeline_compile");
   // banjo-nx (a test, banjo_renut_diag_build_delay_ms): console-slow compiles on the PC.
   if (const int delay = banjo::renut_gpu::DiagBuildDelayMs())
     std::this_thread::sleep_for(std::chrono::milliseconds(delay));
@@ -637,6 +639,7 @@ struct PipelineList {
   void Sync() {
     if (!out || !unsynced)
       return;
+    frame_trace::Scope trace("pipeline_list_sync");
     std::fflush(out);
 #if defined(_WIN32)
     _commit(_fileno(out));
@@ -925,6 +928,7 @@ std::unordered_set<uint64_t> g_spec_failed;
 plume::RenderPipeline *TakePrebuilt(const PipelineKey &key, uint64_t hash,
                                     std::unique_ptr<plume::RenderPipeline> &out, bool &claimed) {
   claimed = false;
+  frame_trace::Scope trace("pipeline_prebuild_wait");
   std::unique_lock lock(g_prebuild.mutex);
   auto it = g_prebuild.by_hash.find(hash);
   if (it == g_prebuild.by_hash.end())

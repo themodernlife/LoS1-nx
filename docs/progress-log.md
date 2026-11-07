@@ -2,6 +2,34 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-07: investigate opening-village stutters in native Metal
+
+- Reproduced movement/combat hitches with the FPS overlay on and Metal API
+  validation off. Added opt-in `LOS_FRAME_TRACE` CPU spans for presentation,
+  GPU-fence waits, shader/pipeline work, pacing, and render-queue activity, plus
+  `tools/macos/analyze_frame_trace.py` for bounded gameplay summaries. Normal
+  launches do not record traces.
+- A CPU sample confirmed waits inside `CAMetalLayer nextDrawable`. Corrected
+  plume's delayed drawable release and the non-atomic slot index advanced by a
+  GPU callback. The render thread now advances slots; presentation releases the
+  slot reference while its completion handler owns the in-flight reference.
+- Two 35.26-second combat segments did not establish a stutter improvement:
+  median intervals stayed near 16.7 ms, but the repeat run still had long gaps,
+  including 255-278 ms between guest Swaps outside shader/presentation spans.
+  Documented full results and limitations in `docs/macos-metal-stutter.md`.
+- Moved diagnostic writes to a bounded background writer after the initial
+  comparison to avoid synchronous trace I/O on the measured threads. The final
+  logger's village capture is pending: the Mac locked during level setup. The
+  unfinished queue/paging capture is not counted as gameplay evidence.
+- ARM64 build and 8,192-pixel offscreen Metal API validation passed. Exercised
+  the corrected swapchain in live village combat with validation off. Verified
+  4,000 buffered records from eight threads, analyzer interval/window/thread
+  behavior, shell syntax, and patch reproduction from pinned plume originals.
+  Live swapchain validation with the API layer on remains outstanding.
+- Kept all changes in `codex/dxmt-investigation`; main and its profile are
+  untouched. No claim that all stutters are fixed. Next: capture final queue
+  timings, then attribute guest-thread stalls and actual display pacing.
+
 ## 2026-11-07: include the FPS overlay in the native Metal test app
 
 - Rebased `codex/dxmt-investigation` onto fork main's FPS update `95fc9d1`.

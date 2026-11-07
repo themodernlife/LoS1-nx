@@ -1,4 +1,5 @@
 #include "renut_engine/gpu/backend/metal_backend.h"
+#include "renut_engine/gpu/backend/frame_trace.h"
 
 #include <plume_metal.h>
 #include <spirv_msl.hpp>
@@ -68,6 +69,8 @@ std::unique_ptr<plume::RenderShader> CreateMetalShader(plume::RenderDevice *devi
   if (!device || !spirv || size < 20 || size % 4)
     return nullptr;
   try {
+    frame_trace::Scope shader_trace("metal_shader", name);
+    frame_trace::Scope translate_trace("metal_translate", name);
     AutoreleasePool pool;
     sc::CompilerMSL compiler(static_cast<const uint32_t *>(spirv), size / 4);
     const auto stage = compiler.get_execution_model();
@@ -132,6 +135,8 @@ std::unique_ptr<plume::RenderShader> CreateMetalShader(plume::RenderDevice *devi
 
     const auto source = PadArgumentBuffers(compiler.compile(), counts);
     const auto entry = compiler.get_cleansed_entry_point_name("main", stage);
+    translate_trace.Stop();
+    frame_trace::Scope library_trace("metal_library", name);
     NS::Error *error = nullptr;
     auto options_mtl = MTL::CompileOptions::alloc()->init();
     options_mtl->setLanguageVersion(MTL::LanguageVersion3_0);
@@ -139,6 +144,7 @@ std::unique_ptr<plume::RenderShader> CreateMetalShader(plume::RenderDevice *devi
     auto library = static_cast<plume::MetalDevice *>(device)->mtl->newLibrary(
         NS::String::string(source.c_str(), NS::UTF8StringEncoding), options_mtl, &error);
     options_mtl->release();
+    library_trace.Stop();
     if (!library) {
       std::fprintf(stderr, "Metal shader %s: %s\n", name,
           error ? error->localizedDescription()->utf8String() : "compiler returned no library");
