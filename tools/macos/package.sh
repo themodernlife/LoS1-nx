@@ -16,6 +16,7 @@ cp -p "$BUILD/los" "$BUILD/librexruntime.dylib" "$BUILD/librexgpu-xenos.dylib" "
 ditto "$BUILD/vulkan" "$BIN/vulkan"
 python3 - "$REPO" "$APP" <<'PY'
 import json
+import os
 import plistlib
 import sys
 from pathlib import Path
@@ -34,9 +35,9 @@ for name in ('game_root', 'game_root_disc2'):
         raise SystemExit(f'Refusing to replace game data at {link}')
     link.symlink_to(target, target_is_directory=True)
 info = {
-    'CFBundleName': 'Lords of Shadow',
-    'CFBundleDisplayName': 'Lords of Shadow',
-    'CFBundleIdentifier': 'local.lordsofshadow.recompiled',
+    'CFBundleName': os.environ.get('LOS_APP_NAME', 'Lords of Shadow'),
+    'CFBundleDisplayName': os.environ.get('LOS_APP_NAME', 'Lords of Shadow'),
+    'CFBundleIdentifier': os.environ.get('LOS_APP_IDENTIFIER', 'local.lordsofshadow.recompiled'),
     'CFBundleExecutable': 'los',
     'CFBundleIconFile': 'AppIcon.icns',
     'CFBundlePackageType': 'APPL',
@@ -52,6 +53,10 @@ config = app / 'Contents/MacOS/los.toml'
 if not config.exists():
     config.write_text(
         (repo / 'app/los_mac.toml').read_text()
+        + ('\nrenut_gpu_backend = ' + json.dumps(os.environ['LOS_GPU_BACKEND']) + '\n'
+           if os.environ.get('LOS_GPU_BACKEND') else '')
+        + ('\nuser_data_root = ' + json.dumps(os.environ['LOS_USER_DATA_ROOT']) + '\n'
+           if os.environ.get('LOS_USER_DATA_ROOT') else '')
         + '\n# Local game assets, kept outside the application bundle.\n'
         + 'game_data_root = ' + json.dumps(str(repo / 'assets/game_root')) + '\n'
     )

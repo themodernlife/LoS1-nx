@@ -1,9 +1,9 @@
 /**
  * @file    gpu/backend/backend.h
- * @brief   Runtime choice between the D3D12 and Vulkan plume backends.
+ * @brief   Runtime choice of plume rendering backend.
  *
  * Windows builds carry both backends and pick one at startup from the
- * renut_gpu_backend cvar. Other platforms are Vulkan only.
+ * renut_gpu_backend cvar. macOS also offers opt-in native Metal.
  */
 #pragma once
 
@@ -16,7 +16,7 @@
 namespace renut::gpu {
 
 // banjo-nx (2026-10-17): Deko3D, plume's deko3d back end on the Switch (docs/deko3d-renderer.md).
-enum class Backend { D3D12, Vulkan, Deko3D };
+enum class Backend { D3D12, Vulkan, Deko3D, Metal };
 
 // Resolved once from renut_gpu_backend on first call; stable afterwards, so a
 // change from the settings takes effect on the next start.
@@ -29,6 +29,7 @@ inline Backend ActiveBackend() {
   return b ? static_cast<Backend>(b - 1) : detail::LatchBackend();
 }
 inline bool IsVulkan() { return ActiveBackend() == Backend::Vulkan; }
+inline bool IsMetal() { return ActiveBackend() == Backend::Metal; }
 // banjo-nx: the deko3d back end.
 inline bool IsDeko3D() { return ActiveBackend() == Backend::Deko3D; }
 // banjo-nx: Vulkan's way of binding (dynamic constant buffer sets, push constants, buffer device addresses,

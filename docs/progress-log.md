@@ -2,6 +2,51 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-07: opt-in native Metal prototype
+
+- Resumed work at the user's request in `codex/dxmt-investigation`, isolated
+  from the active checkout. Brought in the known macOS baseline `302b488`.
+- Added `renut_gpu_backend = "metal"`, SPIR-V to MSL translation using the
+  SDK's pinned SPIRV-Cross, and native resource/pipeline checks, memory reporting,
+  and blend constants. Vulkan remains the normal default and a working fallback.
+- Added a reproducible plume patch for dynamic constant offsets, native shader
+  libraries, readback, deferred-clear flushing, and pixel-format/stencil views.
+  Added a Metal GPU regression test: 8,192 clear/draw pixels, zero failures under
+  API validation, including sparse bindings and differing per-draw constants.
+- Built the game and exercised title/menu rendering, opening village, movement,
+  both attack types, jumping, and pause/resume on Apple M2 with API validation.
+  The six-minute successful run reported no shader/compiler/validation failures.
+  Saves and a thumbnail were created in the isolated test profile. Also checked
+  the same binary's Vulkan title screen.
+- Added `tools/macos/metal.sh` for separate packaging, launching, and GPU tests,
+  with a distinct bundle ID and explicit isolated save path. Documented the
+  implementation and limitations in `docs/macos-metal.md`.
+- Installed Xcode's Metal Toolchain component for the shader investigation.
+  Native runtime shader compilation uses Metal's library compiler.
+- Remaining: full campaign and effects coverage, a persistent Metal shader cache,
+  and matched-scene performance measurements. No speedup claim; no DXMT code
+  integration. Both tested backends retain Renut's existing no-geometry fallback.
+
+## 2026-11-07: DXMT and direct Metal feasibility
+
+- Traced the active path: Renut -> plume Vulkan -> MoltenVK -> Metal. There
+  is no DXVK layer to replace. Added `docs/macos-metal-options.md` with the
+  integration points and a staged experiment for DXMT and native Metal.
+- Inspected DXMT at `647b0020ba5764e5593b12407afd76964fa11e20`. Its established
+  D3D11 route would need a new backend and shader binding model. Its current
+  source also has opt-in D3D12 and native Mach-O builds, but geometry-shader
+  rejection, native window integration, and synchronization need work.
+- Confirmed our pinned plume already builds a Metal backend. An isolated
+  ARM64 probe created its device and submitted a 64x64 clear on Apple M2.
+  Plume's texture-to-buffer copy crashed because that direction is missing;
+  a native Metal blit readback verified all 4,096 cleared pixels successfully.
+- Custom Metal shader compilation could not run because the Xcode Metal
+  Toolchain component is absent. DXMT was not built, no game renderer was
+  switched, and no gameplay performance claim follows from this probe.
+- Next: trace the game's required features, then validate either native
+  DXMT D3D12 plus presentation or plume Metal's translated shaders/bindings
+  in isolation before adding an opt-in game backend.
+
 ## 2026-11-07: build-time FPS comparison experiment
 
 - `app/CMakeLists.txt`: added optional `LOS_FPS_EXPERIMENT` (default OFF),

@@ -3,6 +3,9 @@
  */
 #include "renut_engine/gpu/backend/backend.h"
 #include "renut_engine/gpu/backend/platform.h"
+#if defined(RENUT_METAL)
+#include "renut_engine/gpu/backend/metal_backend.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -27,10 +30,10 @@
 #include "renut_engine/gpu/banjo_renut_record.h"  // banjo-nx (package 28b)
 
 REXCVAR_DEFINE_STRING(renut_gpu_backend, "d3d12", "Nuts&Bolts/Graphics",
-                      "Renderer backend: d3d12 or vulkan. Takes effect after a restart. "
-                      "Non-Windows builds always use vulkan. banjo-nx: deko3d on the Switch, plume's deko3d "
+                      "Renderer backend: d3d12, vulkan, or metal (experimental macOS). Takes effect after a restart. "
+                      "banjo-nx: deko3d on the Switch, plume's deko3d "
                       "back end (docs/deko3d-renderer.md); elsewhere it means vulkan.")
-    .allowed({"d3d12", "vulkan", "deko3d"})
+    .allowed({"d3d12", "vulkan", "deko3d", "metal"})
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 REXCVAR_DEFINE_BOOL(renut_gpu_dred, false, "Nuts&Bolts/Graphics",
                     "D3D12 device removed diagnostics (DRED breadcrumbs and page faults) for "
@@ -56,7 +59,9 @@ namespace renut::gpu {
 namespace {
 
 Backend ResolveBackend() {
-#if SA2_SWITCH_NO_NVK && defined(PLUME_DEKO3D)
+#if defined(RENUT_METAL)
+  return REXCVAR_GET(renut_gpu_backend) == "metal" ? Backend::Metal : Backend::Vulkan;
+#elif SA2_SWITCH_NO_NVK && defined(PLUME_DEKO3D)
   // sa2-nx (2026-10-20): no Vulkan driver in this build (REXGLUE_SWITCH_NO_NVK): deko3d whatever the key says.
   RGPU_INFO("renut_gpu_backend: deko3d (this build links no Vulkan driver: REXGLUE_SWITCH_NO_NVK)");
   return Backend::Deko3D;
@@ -277,16 +282,24 @@ Backend LatchBackend() {
 }  // namespace detail
 
 const char *BackendName(Backend backend) {
+  if (backend == Backend::Metal)
+    return "Metal";
   return backend == Backend::Vulkan ? "Vulkan" : backend == Backend::Deko3D ? "deko3d" : "D3D12";
 }
 
 plume::RenderShaderFormat HostShaderFormat() {
+  if (IsMetal())
+    return plume::RenderShaderFormat::METAL;
   if (IsDeko3D())
     return plume::RenderShaderFormat::DEKO3D;
   return IsVulkan() ? plume::RenderShaderFormat::SPIRV : plume::RenderShaderFormat::DXIL;
 }
 
 std::unique_ptr<plume::RenderInterface> CreateRenderInterface() {
+#if defined(RENUT_METAL)
+  if (IsMetal())
+    return CreateNativeMetalInterface();
+#endif
 #if defined(PLUME_DEKO3D)
   if (IsDeko3D()) {
     // banjo-nx: the DKSH cache (variants compiled before, on the PC or by this console) before the device exists.
@@ -324,6 +337,10 @@ plume::RenderBufferFlags StorageBufferFlags() {
 bool TextureCreated(const plume::RenderTexture *texture) {
   if (!texture)
     return false;
+#if defined(RENUT_METAL)
+  if (IsMetal())
+    return MetalTextureCreated(texture);
+#endif
 #if defined(PLUME_DEKO3D)
   if (IsDeko3D())
     return static_cast<const plume::Deko3DTexture *>(texture)->valid;
@@ -397,6 +414,10 @@ GpuMemoryUsage QueryGpuMemory(plume::RenderDevice *device) {
   GpuMemoryUsage usage;
   if (!device)
     return usage;
+#if defined(RENUT_METAL)
+  if (IsMetal())
+    return QueryMetalMemory(device);
+#endif
 #if defined(PLUME_DEKO3D)
   if (IsDeko3D()) {
     // deko3d: what the back end made (one memory on the Switch: all of it counts as local).
@@ -444,6 +465,10 @@ GpuMemoryUsage QueryGpuMemory(plume::RenderDevice *device) {
 }
 
 bool SetBlendConstant(plume::RenderCommandList *cmd, const float rgba[4]) {
+#if defined(RENUT_METAL)
+  if (IsMetal())
+    return SetMetalBlendConstant(cmd, rgba);
+#endif
 #if defined(_WIN32)
   if (!IsVulkan()) {
     ID3D12GraphicsCommandList *d3d = static_cast<plume::D3D12CommandList *>(cmd)->d3d;
@@ -476,6 +501,10 @@ bool SetBlendConstant(plume::RenderCommandList *cmd, const float rgba[4]) {
 bool GraphicsPipelineCreated(const plume::RenderPipeline *pipeline) {
   if (!pipeline)
     return false;
+#if defined(RENUT_METAL)
+  if (IsMetal())
+    return MetalPipelineCreated(pipeline);
+#endif
 #if defined(PLUME_DEKO3D)
   if (IsDeko3D())
     return static_cast<const plume::Deko3DGraphicsPipeline *>(pipeline)->valid;
@@ -490,6 +519,10 @@ bool GraphicsPipelineCreated(const plume::RenderPipeline *pipeline) {
 std::unique_ptr<plume::RenderShader> CreateHostShader(plume::RenderDevice *device,
                                                       const HostShaderBlob &blob,
                                                       const char *name) {
+#if defined(RENUT_METAL)
+  if (IsMetal())
+    return CreateMetalShader(device, blob.spirv, blob.spirv_size, name);
+#endif
   const bool vulkan = IsVulkan();
   const void *data = vulkan ? static_cast<const void *>(blob.spirv) : blob.dxil;
   size_t size = vulkan ? blob.spirv_size : blob.dxil_size;

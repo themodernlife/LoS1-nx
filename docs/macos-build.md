@@ -6,6 +6,9 @@ and MoltenVK to reach Metal, with the Xenos backend available as a fallback.
 This is static recompilation, not recovery of the
 original MercurySteam source code.
 
+An experimental native plume Metal path is available through the
+[isolated Metal test build](macos-metal.md).
+
 The starting project is [LoS1-nx](https://github.com/FurryLilManChild/LoS1-nx),
 commit `9c70bb54fc268d14400f7884470879188db70132`. Its SDK is based on
 [ReXGlue](https://github.com/rexglue/rexglue-sdk), commit

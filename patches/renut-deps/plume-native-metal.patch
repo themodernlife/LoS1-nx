@@ -1,0 +1,214 @@
+--- a/plume_metal.h
++++ b/plume_metal.h
+@@ -443,6 +443,8 @@
+         const MetalRenderState *activeRenderState = nullptr;
+         const MetalComputeState *activeComputeState = nullptr;
+         MetalDescriptorSet* renderDescriptorSets[MAX_DESCRIPTOR_SET_BINDINGS] = {};
++        std::vector<uint32_t> renderDynamicOffsets[MAX_DESCRIPTOR_SET_BINDINGS];
++        float blendConstants[4] = {};
+         MetalDescriptorSet* computeDescriptorSets[MAX_DESCRIPTOR_SET_BINDINGS] = {};
+ 
+         MTL::Fence *timestampQueryFence = nullptr;
+@@ -472,6 +474,8 @@
+         void setGraphicsPushConstants(uint32_t rangeIndex, const void *data, uint32_t offset = 0, uint32_t size = 0) override;
+         void setGraphicsDescriptorSet(RenderDescriptorSet *descriptorSet, uint32_t setIndex) override;
+         void setGraphicsRootDescriptor(RenderBufferReference bufferReference, uint32_t rootDescriptorIndex) override;
++        void setGraphicsDescriptorSetDynamic(RenderDescriptorSet *descriptorSet, uint32_t setIndex, const uint32_t *offsets, uint32_t count) override;
++        void setBlendConstants(const float *values);
+         void setRaytracingPipelineLayout(const RenderPipelineLayout *pipelineLayout) override;
+         void setRaytracingPushConstants(uint32_t rangeIndex, const void *data, uint32_t offset = 0, uint32_t size = 0) override;
+         void setRaytracingDescriptorSet(RenderDescriptorSet *descriptorSet, uint32_t setIndex) override;
+@@ -636,6 +640,7 @@
+         MTL::Library *library = nullptr;
+         NS::String *debugName = nullptr;
+ 
++        MetalShader(MTL::Library *library, const char *entryPointName);
+         MetalShader(const MetalDevice *device, const void *data, uint64_t size, const char *entryPointName, RenderShaderFormat format);
+         ~MetalShader() override;
+         virtual void setName(const std::string &name) override;
+@@ -689,7 +694,7 @@
+ 
+         MetalPipelineLayout(MetalDevice *device, const RenderPipelineLayoutDesc &desc);
+         ~MetalPipelineLayout() override;
+-        void bindDescriptorSets(MTL::CommandEncoder* encoder, const MetalDescriptorSet* const* descriptorSets, uint32_t descriptorSetCount, bool isCompute, uint32_t startIndex, std::unordered_set<MetalDescriptorSet*>& encoderDescriptorSets, bool usingResidencySets) const;
++        void bindDescriptorSets(MTL::CommandEncoder* encoder, const MetalDescriptorSet* const* descriptorSets, uint32_t descriptorSetCount, bool isCompute, uint32_t startIndex, std::unordered_set<MetalDescriptorSet*>& encoderDescriptorSets, bool usingResidencySets, const std::vector<uint32_t> *dynamicOffsets = nullptr) const;
+     };
+ 
+     struct MetalDevice : RenderDevice {
+--- a/plume_metal.cpp
++++ b/plume_metal.cpp
+@@ -160,6 +160,7 @@
+             case RenderDescriptorRangeType::BYTE_ADDRESS_BUFFER:
+             case RenderDescriptorRangeType::READ_WRITE_STRUCTURED_BUFFER:
+             case RenderDescriptorRangeType::READ_WRITE_BYTE_ADDRESS_BUFFER:
++            case RenderDescriptorRangeType::CONSTANT_BUFFER_DYNAMIC:
+             case RenderDescriptorRangeType::CONSTANT_BUFFER:
+                 return MTL::DataTypePointer;
+ 
+@@ -875,6 +876,7 @@
+             case RenderDescriptorRangeType::ACCELERATION_STRUCTURE:
+             case RenderDescriptorRangeType::STRUCTURED_BUFFER:
+             case RenderDescriptorRangeType::BYTE_ADDRESS_BUFFER:
++            case RenderDescriptorRangeType::CONSTANT_BUFFER_DYNAMIC:
+             case RenderDescriptorRangeType::CONSTANT_BUFFER:
+             case RenderDescriptorRangeType::SAMPLER:
+                 return MTL::ResourceUsageRead;
+@@ -1236,7 +1238,7 @@
+         descriptor->setArrayLength(desc.arraySize);
+         descriptor->setSampleCount(desc.multisampling.sampleCount);
+ 
+-        MTL::TextureUsage usage = mapTextureUsage(desc.flags);
++        MTL::TextureUsage usage = mapTextureUsage(desc.flags) | MTL::TextureUsagePixelFormatView;
+         // Add shader write usage if this texture might be used as a resolve target
+         if (desc.multisampling.sampleCount == 1 && (usage & MTL::TextureUsageRenderTarget)) {
+             usage |= MTL::TextureUsageShaderWrite;
+@@ -1281,8 +1283,12 @@
+         const uint32_t mipLevels = std::min(desc.mipLevels, texture->desc.mipLevels - desc.mipSlice);
+         const uint32_t arraySize = std::min(desc.arraySize, texture->desc.arraySize - desc.arrayIndex);
+ 
++        // A combined depth/stencil image exposes stencil through the X32 view.
++        MTL::PixelFormat viewFormat = mapPixelFormat(desc.format);
++        if (desc.format == RenderFormat::S8_UINT && texture->desc.format == RenderFormat::D32_FLOAT_S8_UINT)
++            viewFormat = MTL::PixelFormatX32_Stencil8;
+         this->texture = texture->mtl->newTextureView(
+-            mapPixelFormat(desc.format),
++            viewFormat,
+             mapTextureViewType(desc.dimension, texture->desc.multisampling.sampleCount, arraySize),
+             { desc.mipSlice, mipLevels },
+             { desc.arrayIndex, arraySize },
+@@ -1349,6 +1355,13 @@
+             fprintf(stderr, "MTLDevice newLibraryWithSource: failed with error %s.\n", error->localizedDescription()->utf8String());
+             return;
+         }
++    }
++
++    MetalShader::MetalShader(MTL::Library *sourceLibrary, const char *entryPointName) {
++        MetalAutoreleasePool releasePool;
++        format = RenderShaderFormat::METAL;
++        library = sourceLibrary->retain();
++        functionName = NS::String::string(entryPointName, NS::UTF8StringEncoding)->retain();
+     }
+ 
+     MetalShader::~MetalShader() {
+@@ -2637,15 +2650,27 @@
+     }
+ 
+     void MetalCommandList::setGraphicsDescriptorSet(RenderDescriptorSet *descriptorSet, uint32_t setIndex) {
++        setGraphicsDescriptorSetDynamic(descriptorSet, setIndex, nullptr, 0);
++    }
++
++    void MetalCommandList::setGraphicsDescriptorSetDynamic(RenderDescriptorSet *descriptorSet, uint32_t setIndex, const uint32_t *offsets, uint32_t count) {
+         assert(activeGraphicsPipelineLayout != nullptr);
+-        assert(setIndex < MAX_DESCRIPTOR_SET_BINDINGS && "Descriptor set index out of range");
+-
+-        MetalDescriptorSet *interfaceDescriptorSet = static_cast<MetalDescriptorSet*>(descriptorSet);
+-        if (renderDescriptorSets[setIndex] != interfaceDescriptorSet) {
++        assert(setIndex < MAX_DESCRIPTOR_SET_BINDINGS);
++        assert(offsets || count == 0);
++        auto *interfaceDescriptorSet = static_cast<MetalDescriptorSet *>(descriptorSet);
++        auto &current = renderDynamicOffsets[setIndex];
++        const bool offsetsChanged = current.size() != count || (count && !std::equal(current.begin(), current.end(), offsets));
++        if (renderDescriptorSets[setIndex] != interfaceDescriptorSet || offsetsChanged) {
+             renderDescriptorSets[setIndex] = interfaceDescriptorSet;
++            if (count) current.assign(offsets, offsets + count);
++            else current.clear();
+             dirtyGraphicsState.descriptorSets = 1;
+             dirtyGraphicsState.descriptorSetDirtyIndex = std::min(dirtyGraphicsState.descriptorSetDirtyIndex, setIndex);
+         }
++    }
++
++    void MetalCommandList::setBlendConstants(const float *values) {
++        std::copy_n(values, 4, blendConstants);
+     }
+ 
+     void MetalCommandList::setGraphicsRootDescriptor(RenderBufferReference bufferReference, uint32_t rootDescriptorIndex) {
+@@ -2983,7 +3008,8 @@
+         assert(srcLocation.type != RenderTextureCopyType::UNKNOWN);
+ 
+         MetalAutoreleasePool releasePool;
+-        endOtherEncoders(EncoderType::Blit);
++        endOtherEncoders(EncoderType::None);
++        handlePendingClears();
+         checkActiveBlitEncoder();
+         activeType = EncoderType::Blit;
+ 
+@@ -2991,6 +3017,21 @@
+         const MetalTexture *srcTexture = static_cast<const MetalTexture *>(srcLocation.texture);
+         const MetalBuffer *dstBuffer = static_cast<const MetalBuffer *>(dstLocation.buffer);
+         const MetalBuffer *srcBuffer = static_cast<const MetalBuffer *>(srcLocation.buffer);
++
++        if (dstLocation.type == RenderTextureCopyType::PLACED_FOOTPRINT && srcLocation.type == RenderTextureCopyType::SUBRESOURCE) {
++            assert(dstBuffer && srcTexture);
++            const auto &footprint = dstLocation.placedFootprint;
++            const uint32_t blockWidth = RenderFormatBlockWidth(footprint.format);
++            const uint32_t bytesPerBlock = RenderFormatSize(footprint.format);
++            const uint32_t rowBytes = ((footprint.rowWidth + blockWidth - 1) / blockWidth) * bytesPerBlock;
++            const uint32_t imageBytes = rowBytes * ((footprint.height + blockWidth - 1) / blockWidth);
++            const MTL::Origin origin = srcBox ? MTL::Origin{NS::UInteger(srcBox->left), NS::UInteger(srcBox->top), NS::UInteger(srcBox->front)} : MTL::Origin{0, 0, 0};
++            const MTL::Size size = srcBox ? MTL::Size{NS::UInteger(srcBox->right - srcBox->left), NS::UInteger(srcBox->bottom - srcBox->top), NS::UInteger(srcBox->back - srcBox->front)} : MTL::Size{footprint.width, footprint.height, footprint.depth};
++            const uint64_t offset = footprint.offset + uint64_t(dstZ) * imageBytes + uint64_t(dstY / blockWidth) * rowBytes + uint64_t(dstX / blockWidth) * bytesPerBlock;
++            activeBlitEncoder->copyFromTexture(srcTexture->mtl, srcLocation.subresource.arrayIndex, srcLocation.subresource.mipLevel,
++                origin, size, dstBuffer->mtl, offset, rowBytes, imageBytes);
++            return;
++        }
+ 
+         if (dstLocation.type == RenderTextureCopyType::SUBRESOURCE && srcLocation.type == RenderTextureCopyType::PLACED_FOOTPRINT) {
+             assert(dstTexture != nullptr);
+@@ -3393,6 +3434,7 @@
+     }
+ 
+     void MetalCommandList::checkForUpdatesInGraphicsState() {
++        activeRenderEncoder->setBlendColor(blendConstants[0], blendConstants[1], blendConstants[2], blendConstants[3]);
+         // Pipeline state - only update if the actual pipeline object changed
+         if (dirtyGraphicsState.pipelineState) {
+             if (activeRenderState && activeRenderState->renderPipelineState != stateCache.lastPipelineState) {
+@@ -3492,7 +3534,7 @@
+         // Descriptor sets
+         if (dirtyGraphicsState.descriptorSets) {
+             if (activeGraphicsPipelineLayout) {
+-                activeGraphicsPipelineLayout->bindDescriptorSets(activeRenderEncoder, renderDescriptorSets, MAX_DESCRIPTOR_SET_BINDINGS, false, dirtyGraphicsState.descriptorSetDirtyIndex, currentEncoderDescriptorSets, device->residencySet != nullptr);
++                activeGraphicsPipelineLayout->bindDescriptorSets(activeRenderEncoder, renderDescriptorSets, MAX_DESCRIPTOR_SET_BINDINGS, false, dirtyGraphicsState.descriptorSetDirtyIndex, currentEncoderDescriptorSets, device->residencySet != nullptr, renderDynamicOffsets);
+             }
+             dirtyGraphicsState.descriptorSets = 0;
+             dirtyGraphicsState.descriptorSetDirtyIndex = MAX_DESCRIPTOR_SET_BINDINGS;
+@@ -3746,7 +3788,7 @@
+ 
+     MetalPipelineLayout::~MetalPipelineLayout() {}
+ 
+-    void MetalPipelineLayout::bindDescriptorSets(MTL::CommandEncoder* encoder, const MetalDescriptorSet* const* descriptorSets, uint32_t descriptorSetCount, bool isCompute, uint32_t startIndex, std::unordered_set<MetalDescriptorSet*>& encoderDescriptorSets, bool usingResidencySets) const {
++    void MetalPipelineLayout::bindDescriptorSets(MTL::CommandEncoder* encoder, const MetalDescriptorSet* const* descriptorSets, uint32_t descriptorSetCount, bool isCompute, uint32_t startIndex, std::unordered_set<MetalDescriptorSet*>& encoderDescriptorSets, bool usingResidencySets, const std::vector<uint32_t> *dynamicOffsets) const {
+         for (uint32_t i = startIndex; i < setLayoutCount; i++) {
+             if (i >= descriptorSetCount || descriptorSets[i] == nullptr) {
+                 continue;
+@@ -3758,6 +3800,31 @@
+             if (!usingResidencySets) {
+                 // Track descriptor set for later resource binding
+                 encoderDescriptorSets.insert(const_cast<MetalDescriptorSet*>(descriptorSet));
++            }
++
++            // Dynamic descriptors need a per-draw snapshot: updating the shared
++            // argument buffer would change earlier draws still queued on the GPU.
++            if (!isCompute && dynamicOffsets && !dynamicOffsets[i].empty()) {
++                assert(descriptorSet->device->useDirectBufferAddresses);
++                const auto length = descriptorBuffer.mtl->length();
++                assert(length <= 4096);
++                std::vector<uint8_t> snapshot(length);
++                memcpy(snapshot.data(), descriptorBuffer.mtl->contents(), length);
++                size_t offsetIndex = 0;
++                for (const auto &binding : descriptorSet->setLayout->setBindings) {
++                    if (binding.descriptorType != RenderDescriptorRangeType::CONSTANT_BUFFER_DYNAMIC)
++                        continue;
++                    for (uint32_t element = 0; element < binding.descriptorCount; ++element) {
++                        assert(offsetIndex < dynamicOffsets[i].size());
++                        auto *address = reinterpret_cast<uint64_t *>(snapshot.data()) + binding.binding + element;
++                        *address += dynamicOffsets[i][offsetIndex++];
++                    }
++                }
++                assert(offsetIndex == dynamicOffsets[i].size());
++                auto *render = static_cast<MTL::RenderCommandEncoder *>(encoder);
++                render->setVertexBytes(snapshot.data(), length, DESCRIPTOR_SETS_BINDING_INDEX + i);
++                render->setFragmentBytes(snapshot.data(), length, DESCRIPTOR_SETS_BINDING_INDEX + i);
++                continue;
+             }
+ 
+             // Bind argument buffer

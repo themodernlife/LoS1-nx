@@ -1,6 +1,6 @@
 # Nothing from the game goes into this repository: no game files, no code translated from it,
 # nothing built from it. Each player makes these from their own copy.
-assets/
+assets
 app/generated/
 *.xex
 *.bshdat

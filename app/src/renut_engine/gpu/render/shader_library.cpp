@@ -2,6 +2,9 @@
  * @file    gpu/render/shader_library.cpp
  */
 #include "renut_engine/gpu/render/shader_library.h"
+#if defined(RENUT_METAL)
+#include "renut_engine/gpu/backend/metal_backend.h"
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -97,7 +100,7 @@ void ShaderBoolSpecMask(const ShaderCacheEntry &entry, uint32_t mask[8]) {
     return;
   }
 #endif
-  if (!IsVulkan() || entry.spirvSize == 0)
+  if ((!IsVulkan() && !IsMetal()) || entry.spirvSize == 0)
     return;
   const uint8_t *cache = Decompress(g_spirv, g_compressedSpirvCache, g_spirvCacheCompressedSize,
                                     g_spirvCacheDecompressedSize, "SPIR-V");
@@ -135,7 +138,7 @@ std::unique_ptr<plume::RenderShader> CreateCachedShader(plume::RenderDevice *dev
     return banjo::renut_gpu::deko3d::CreateGameShader(device, entry.hash);
 #endif
 
-  if (IsVulkan()) {
+  if (IsVulkan() || IsMetal()) {
     const uint8_t *cache = Decompress(g_spirv, g_compressedSpirvCache, g_spirvCacheCompressedSize,
                                       g_spirvCacheDecompressedSize, "SPIR-V");
     if (!cache || entry.spirvSize == 0)
@@ -146,6 +149,12 @@ std::unique_ptr<plume::RenderShader> CreateCachedShader(plume::RenderDevice *dev
       RGPU_ERROR("SPIR-V decode failed for shader {:016X}", entry.hash);
       return nullptr;
     }
+#if defined(RENUT_METAL)
+    if (IsMetal()) {
+      const auto name = fmt::format("guest_{:016x}", entry.hash);
+      return CreateMetalShader(device, spirv.data(), spirv.size(), name.c_str());
+    }
+#endif
     return device->createShader(spirv.data(), spirv.size(), "main",
                                 plume::RenderShaderFormat::SPIRV);
   }
