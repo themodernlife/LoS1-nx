@@ -2,6 +2,34 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-08: attribute Metal village hitches and validate the swapchain
+
+- Completed the final buffered logger's village movement/combat capture. In
+  forty seconds, 2,375 present intervals had a 16.660 ms median, nine exceeded
+  33.333 ms, and the largest was 127.164 ms. Shader creation stayed below
+  3.821 ms. No dropped trace records were reported.
+- Separated drawable blocking from broader CPU stalls. Three roughly 50 ms
+  intervals contain 44-46 ms drawable waits and game-thread queue backpressure.
+  The largest hitch also has a 146 ms guest Swap gap, a long render-queue wait,
+  and a slow batch outside shader/drawable/fence spans. System memory compression
+  activity coincides with that hitch but does not prove causation.
+- A separate System Trace attributes a 79.531 ms hitch largely to scheduling:
+  the render thread spent 64.917 ms ready but off the CPU and 5.360 ms running.
+  Recorded VM operations were tiny during that hitch. It also independently
+  confirms a 28.602 ms semaphore wait inside `CAMetalLayer nextDrawable`.
+  Aligned clocks through 280 pacing endpoints; rejected inconsistent exported
+  wall-clock metadata. Profiling overhead and competing workloads remain limits.
+- Metal System Trace collected CPU stacks and drawable waits, but its GPU and
+  display execution exports were empty. Documented that limitation, recording
+  overhead, retained scheduler window, exact evidence, and next isolation steps
+  in `docs/macos-metal-stutter.md`. No unsupported optimization or speedup claim.
+- Completed live movement, both attack types, jumping, and pause with Metal API
+  validation enabled. Native Metal on Apple M2 was confirmed, with no new API
+  validation or renderer errors. Closed test processes afterward. Existing FPS
+  overlay, build, graphics settings, and isolated profile were preserved.
+- Only investigation documentation changed this session. Kept raw traces,
+  binaries, and generated data ignored; main and its profile remain untouched.
+
 ## 2026-11-07: investigate opening-village stutters in native Metal
 
 - Reproduced movement/combat hitches with the FPS overlay on and Metal API

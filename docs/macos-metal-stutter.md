@@ -111,33 +111,142 @@ Local ignored evidence: `out/metal-stutter-baseline.csv` at 193.336-228.596 s,
 files, and `out/metal-stutter-sample.txt`. Raw traces, game binaries, and generated
 shader data are not committed.
 
-### Further isolation and current limits
+## Buffered village capture, 2026-11-08
+
+Completed a fresh 40-second movement/combat window with the final background
+writer and queue timings, validation off, the same build/settings, and no
+concurrent build or Instruments recording. No dropped trace events were reported.
+This run is diagnostic, not a controlled comparison with the earlier logger.
+
+| CPU timing | Buffered capture |
+| --- | ---: |
+| Present intervals measured | 2,375 |
+| Median present interval | 16.660 ms |
+| 99th-percentile present interval | 23.254 ms |
+| Longest present interval | 127.164 ms |
+| Intervals over 33.333 ms / 50 ms | 9 / 2 |
+| Longest guest Swap interval | 145.924 ms |
+| Longest drawable acquisition | 46.350 ms |
+| Longest frame-slot fence wait | 18.932 ms |
+| Longest shader creation / prebuilt lookup | 3.821 ms / 0.081 ms |
+
+There are at least two distinct stall patterns:
+
+- Three roughly 49-50 ms present intervals contain 44-46 ms drawable waits.
+  The game thread simultaneously waits about 32 ms for the render queue's
+  frame-ahead limit. These are presentation-side stalls propagating back into
+  the game thread; the current trace cannot distinguish GPU delays from delayed
+  compositor/drawable availability.
+- The largest interval contains a 50.847 ms render-queue wait followed by a
+  49.622 ms render batch, with neither accounted for by a long shader, drawable,
+  or instrumented GPU-fence call. `render_queue_wait` includes both mutex
+  acquisition and waiting for work, so this alone does not prove an empty queue.
+  The game also stops producing Swaps for about 146 ms. Its independent runtime
+  log reports that gap and ten missing audio frames in the same ten-second
+  reporting window. This is broader than a slow presentation call.
+
+A one-second system-wide `vm_stat` observer recorded 33,023 decompressed pages
+and 23,833 compressed pages in the sample covering the largest hitch, about
+516 MiB and 372 MiB at the machine's 16 KiB page size. That sample had zero swap
+ins/outs and 705 page-ins. This is a memory-pressure correlation, not proof that
+the game faulted those pages or that disk swapping caused the hitch. Other
+compression bursts did not produce the largest frame gaps. No unrelated apps
+were closed and no system settings were changed.
+
+Local ignored evidence: `out/metal-stutter-buffered-20261108.csv`, window
+170.354782-210.354782 s, its marker/summary JSON files,
+`out/metal-stutter-vm-20261108.jsonl`, and runtime `los_009.log` under the test
+app's `Contents/MacOS/logs/`. The memory observer covers only the first part of
+the combat window. Its timestamps follow the most recently flushed trace row,
+so correlation has approximately one sample period of uncertainty.
+
+### Instruments and validation
+
+A separate 20-second Metal System Trace captured 1,073 Core Animation drawable
+waits, up to 23.868 ms, and a 206.008 ms command-list encoding interval. The
+buffered logger independently measured a 208.139 ms render batch in that run.
+Only ten running render-thread samples and eight running game-thread samples
+fall in the long encoding interval. Sampling only running threads cannot tell
+whether the missing time is blocked, descheduled, or unobserved; the sampled
+texture/stream hashing functions must not be blamed for the whole interval.
+
+The capture includes the transition to the Health Font tutorial and has
+substantial instrumentation overhead: `__kdebug_trace64` is the leaf in 877 of
+5,504 render-thread samples. It is not used as a performance comparison. GPU
+execution and displayed-surface exports contained no rows, so this capture does
+not establish GPU execution time or visible frame pacing. The trace saved
+successfully with a warning about backdated signpost intervals. Local evidence
+is `out/metal-stutter-20261108.trace` and its XML exports.
+
+### Scheduler attribution
+
+A separate System Trace identifies scheduling delay in a 79.531 ms present
+interval. Its default windowed recording retained ten seconds of the requested
+twenty seconds. The retained window includes movement/combat and has 588 present
+intervals, four over 33.333 ms and one over 50 ms. It is also an instrumented
+diagnostic run, not a benchmark.
+
+The CSV and scheduler clocks were aligned using 280 matching guest pacing sleep
+endpoints, whose offsets agree within 3.2 microseconds. The exported TOC wall
+clock gave an inconsistent offset and was rejected. At scheduler time
+7.091396-7.170927 seconds:
+
+| Thread state during the 79.531 ms hitch | Render thread | Game thread |
+| --- | ---: | ---: |
+| Running | 5.360 ms | 7.829 ms |
+| Preempted | 54.210 ms | 44.329 ms |
+| Runnable, waiting to execute | 10.707 ms | 2.514 ms |
+| Blocked | 9.197 ms | 24.826 ms |
+
+The render thread spends 64.917 ms ready but off the CPU. Its 29.847 ms batch
+contains two long preemptions; a later 20.674 ms present span includes 19.561 ms
+preempted while submitting a Cocoa run-loop wakeup. Those wall durations are
+not evidence that hashing or the Cocoa call consumes that much CPU. The game
+thread also waits on a guest synchronization object for part of the interval.
+Only about 0.008 ms of recorded game-thread VM operations overlap this hitch.
+Across the retained ten seconds, the longest VM operation is 0.869 ms and the
+longest decompression is 0.143 ms. Memory pressure remains a suspect for the
+earlier capture, but page-fault latency does not explain this captured hitch.
+
+The same scheduler capture independently confirms a 28.630 ms drawable acquire
+contains a 28.602 ms semaphore wait inside `CAMetalLayer nextDrawable`. Thus
+ready-thread scheduling delays and drawable blocking are separately observed.
+The responsible competing workload is not established, and Instruments itself
+can contribute contention. This does not prove the earlier 127 ms hitch has
+the same cause or that normal unprofiled gameplay suffers identical delays.
+
+Local evidence: `out/metal-scheduler-20261108.trace`, its syscall/thread-state/VM
+exports, `out/metal-stutter-scheduler-20261108.csv`, the alignment JSON, and
+`out/metal-scheduler-20261108-hitch.json`. Keep these machine-local artifacts out
+of Git. The test process was closed after capture.
+
+### Live API validation
+
+The corrected swapchain also completed a separate live village movement/combat,
+jump, and pause run with `MTL_DEBUG_LAYER=1`. The log confirms API validation
+enabled and native Metal on Apple M2, with no new API validation errors or
+renderer errors. This validates the exercised path, not the full campaign.
+The validation process was closed afterward; normal launches still default to
+validation off. Evidence: `out/metal-validation-20261108-stderr.log` and
+runtime `los_010.log`.
+
+### Remaining isolation
 
 The existing runtime logs show gameplay averages near 4-5 ms of render-thread
 work and 12-14 ms of GPU execution, alongside much larger isolated game-thread
 intervals. These averages do not prove the absence of CPU or GPU spikes.
-The first two comparison runs synchronously flushed diagnostic rows, so their
-results include that measurement overhead. The final diagnostic implementation
-uses a bounded background writer to avoid disk writes on the measured threads;
-its timings need a fresh capture before comparing against those earlier runs.
-
-System memory was heavily compressed during inspection, but the snapshot was
-outside the timed gameplay window and does not establish that paging caused the
-hitches. No unrelated applications or system settings were changed. The planned
-queue/paging gameplay capture was interrupted by the Mac locking at level setup.
-Its menu/locked-session data is not used as gameplay evidence.
-
-The next useful measurement is a village run with the final buffered trace,
-correlating long `render_queue_wait` spans with guest Swap gaps, and long
-`render_batch` spans with nested shader, GPU-fence, and drawable waits. If the
-render queue is empty during a hitch, capture the game thread's call stacks and
-I/O/paging activity in that interval. Actual display presentation timestamps or
-an Instruments Metal System Trace are still needed to quantify visible pacing.
+The next CPU investigation should compare scheduling with less profiling and
+lower background contention before changing thread priority. No unrelated apps
+were closed for this test. Drawable stalls still need actual display timestamps
+plus GPU completion timing to distinguish missed GPU deadlines from compositor
+availability. The current measurements do not justify changing frame pacing,
+disabling cache-correctness checks, or claiming a shader-cache fix will remove
+these hitches. No new performance fix was made on the basis of these captures.
 
 Validation completed: ARM64 game build; 8,192-pixel offscreen Metal API validation
 test with zero failures; live startup and village movement/combat with the
 swapchain correction and API validation off; 4,000 buffered trace records from
 eight threads with duration filtering; analyzer interval/window/thread checks;
 and clean patch application to pristine pinned plume sources reproducing the
-built files. The final buffered logger has not yet had a village capture, and
-the changed swapchain has not yet had a live API-validation-on run.
+built files. The final buffered logger and corrected live swapchain have now
+been exercised in the village, including a separate API-validation-on run.
