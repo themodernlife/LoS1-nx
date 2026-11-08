@@ -4,6 +4,10 @@ Investigated on 2026-11-08 in the separate native Metal worktree. A Metal
 clear-state defect is now reproduced and fixed, but the user confirmed that
 the tumble trails remain with normal camera blur. It is not the cutscene fix.
 
+Tracked separately in [GitHub issue #2](https://github.com/themodernlife/LoS1-nx/issues/2).
+Implementation and diagnostics are on
+[`codex/native-metal`](https://github.com/themodernlife/LoS1-nx/tree/codex/native-metal).
+
 ## Latest result and candidate correction
 
 Latest user validation of the adaptive-sampling build: ordinary riding blur

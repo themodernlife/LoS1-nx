@@ -12,10 +12,14 @@ Newest first. Each entry: what was done, what was found, what is next.
   stutter diagnostics, clear-state fix, input captures and opt-in sampling
   experiment on `codex/native-metal`, based on the existing isolated worktree.
   The main checkout and the prior investigation branch are retained.
-- Prepare a separate GitHub issue in the user's fork with the reproduction,
+- Opened [GitHub issue #2](https://github.com/themodernlife/LoS1-nx/issues/2)
+  in the user's fork with the reproduction,
   observed versus expected behavior, trial results, corrected camera-history
   interpretation, measured riding inputs, and outstanding tumble capture and
   matched Vulkan comparison. No game data, binaries or captures are published.
+- Pushed `codex/native-metal` to the fork. Enabled the fork's previously
+  disabled Issues feature to file the requested report. No PR or merge was
+  created, and the main checkout remains clean at `95fc9d1`.
 - Reuse the already successful ARM64 build, packaging and 32,768-pixel Metal
   smoke result; this organizational step changes documentation only.
 
