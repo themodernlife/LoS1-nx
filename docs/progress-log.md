@@ -2,6 +2,23 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-08: investigate cutscene ghost outlines in the supplied movie
+
+- Used three subagents to inspect the clip, Metal presentation, and cutscene
+  resource/sampling paths. The user confirmed the repeated silhouettes around
+  Gabriel at approximately 1.5-2 seconds are the reported artifact. Consecutive
+  frames favor motion-blur ghosting over conventional horizontal tearing.
+- Found a concrete sampler parity gap: Vulkan applies the guest mip LOD bias,
+  while the native Metal sampler and shader bridge currently omit it. Its
+  relevance to this effect is unproven; the blur pass and its input mip counts
+  have not been captured. No specific presentation or resource reuse bug was
+  confirmed. The recorded run used x1 internal render scale.
+- Recorded evidence, caveats, and distinguishing tests in
+  `docs/macos-metal-cutscene.md`. Next: matched-scene Vulkan/Metal replay and an
+  offscreen frame capture, followed by pass-level inspection if they differ.
+- Changed documentation only in the experimental worktree. Kept extracted
+  frames ignored, and left the current game, save profile, and main untouched.
+
 ## 2026-11-08: attribute Metal village hitches and validate the swapchain
 
 - Completed the final buffered logger's village movement/combat capture. In
