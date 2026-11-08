@@ -16,17 +16,40 @@ at 2940x1912, including the game window and desktop.
 - The overlay and window chrome remain sharp. There is no clear horizontal seam
   dividing two otherwise coherent frames, as expected with ordinary tearing.
 - The character becomes sharp as movement slows around three seconds.
-- The scene appears to be an in-engine QTE finisher that returns to gameplay,
-  rather than prerecorded video playback.
+- The scene is the Hunting Path horse-chase QTE/fall sequence, identified by
+  comparison with the user's subsequent reference video. It appears to be
+  rendered in-engine rather than prerecorded video playback.
 
 These observations favor motion-blur ghosting or another rendering/sampling
-artifact over display tearing. They do not establish whether the effect is
-intended, inherited from the shared renderer, or specific to Metal.
+artifact over display tearing. The local movie alone does not establish
+whether the effect is intended, inherited from the shared renderer, or specific
+to Metal. The reference comparison below narrows that uncertainty.
 
 Three subagents independently reviewed the clip, Metal presentation, and
 cutscene resource/sampling paths. Their findings are consistent with this
 classification. The recorded run used native Metal on Apple M2 at x1 internal
 render scale, with the FPS overlay enabled.
+
+## Reference comparison supplied by the user
+
+Viewed JamesInDigital's
+[Castlevania Lords of Shadow - Chapter 1 - Hunting Path](https://www.youtube.com/watch?v=spsQQXgPzsY&t=195s)
+in the browser. The user mentioned 3:15, while the supplied link starts at
+3:37. Checked the chase around 3:14-3:21 and stepped through the matching tumble
+around 3:35-3:36, including player times 215.242, 215.509, 215.742, and 216.242
+seconds. The browser reported a decoded video size of 1920x1080.
+
+The reference has motion softness during the tumble, but the inspected moving
+silhouettes and coat edges do not show the dense, regularly spaced copies seen
+in the local Metal recording. This strengthens the rendering-defect hypothesis
+and weakens the explanation that our severe trails are simply the intended
+effect. It does not identify the faulty pass or distinguish shared Renut
+behavior from Metal-specific behavior.
+
+The reference platform, graphics settings, and capture processing are not
+verified. These are corresponding action samples, not an exact frame-aligned
+or pixel-equivalent comparison. A controlled Vulkan/Metal replay remains the
+next test; do not treat the reference as proof of the missing mip-bias theory.
 
 ## Leading explanation and concrete parity gap
 
@@ -76,7 +99,7 @@ or synchronization path.
 
 ## Tests that distinguish the remaining possibilities
 
-1. Reproduce the same QTE finisher with native Metal and Vulkan, using the same
+1. Reproduce the Hunting Path QTE/fall with native Metal and Vulkan, using the same
    executable, checkpoint, internal resolution, and graphics settings. Preserve
    the user's profile by making a separate diagnostic copy before replaying.
    If both backends show matching trails, investigate the shared renderer and

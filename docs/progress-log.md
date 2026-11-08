@@ -2,6 +2,17 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-08: compare cutscene ghosting with the supplied reference video
+
+- Inspected the user's YouTube reference around 3:15 and the matching tumble
+  at 3:35-3:36. Identified the scene as the Hunting Path horse-chase QTE/fall.
+  Reference frames have motion softness without the dense repeated outlines
+  visible in the local Metal movie, strengthening the rendering-defect theory.
+- Updated `docs/macos-metal-cutscene.md` with timestamps and comparison limits.
+  The source platform/settings are unverified, and this does not isolate Metal
+  from shared Renut or prove a sampler cause. A controlled backend comparison
+  remains next. Only documentation changed in the experimental worktree.
+
 ## 2026-11-08: investigate cutscene ghost outlines in the supplied movie
 
 - Used three subagents to inspect the clip, Metal presentation, and cutscene
