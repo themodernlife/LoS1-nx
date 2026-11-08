@@ -18,6 +18,15 @@
          void setRaytracingPipelineLayout(const RenderPipelineLayout *pipelineLayout) override;
          void setRaytracingPushConstants(uint32_t rangeIndex, const void *data, uint32_t offset = 0, uint32_t size = 0) override;
          void setRaytracingDescriptorSet(RenderDescriptorSet *descriptorSet, uint32_t setIndex) override;
+@@ -505,7 +509,7 @@
+         void endActiveResolveTextureComputeEncoder();
+         void prepareClearVertices(const RenderRect& rect, simd::float2* outVertices);
+         void checkForUpdatesInGraphicsState();
+-        void setCommonClearState() const;
++        void setCommonClearState();
+         void handlePendingClears();
+ 
+         void barrierWait(MetalBarrierStage stage, MTL::RenderCommandEncoder* encoder);
 @@ -636,6 +640,7 @@
          MTL::Library *library = nullptr;
          NS::String *debugName = nullptr;
@@ -171,7 +180,113 @@
      }
  
      void MetalCommandList::setGraphicsRootDescriptor(RenderBufferReference bufferReference, uint32_t rootDescriptorIndex) {
-@@ -2983,7 +3016,8 @@
+@@ -2757,12 +2790,23 @@
+         dirtyGraphicsState.depthBias = 1;
+     }
+ 
+-    void MetalCommandList::setCommonClearState() const {
+-        activeRenderEncoder->setViewport({ 0, 0, static_cast<float>(targetFramebuffer->width), static_cast<float>(targetFramebuffer->height), 0.0f, 1.0f });
+-        activeRenderEncoder->setScissorRect(clampScissorRectIfNecessary({ 0, 0, static_cast<int32_t>(targetFramebuffer->width), static_cast<int32_t>(targetFramebuffer->height) }, targetFramebuffer));
++    void MetalCommandList::setCommonClearState() {
++        const MTL::Viewport viewport = { 0, 0, static_cast<float>(targetFramebuffer->width), static_cast<float>(targetFramebuffer->height), 0.0f, 1.0f };
++        const MTL::ScissorRect scissor = clampScissorRectIfNecessary({ 0, 0, static_cast<int32_t>(targetFramebuffer->width), static_cast<int32_t>(targetFramebuffer->height) }, targetFramebuffer);
++        activeRenderEncoder->setViewport(viewport);
++        activeRenderEncoder->setScissorRect(scissor);
+         activeRenderEncoder->setTriangleFillMode(MTL::TriangleFillModeFill);
+         activeRenderEncoder->setCullMode(MTL::CullModeNone);
+         activeRenderEncoder->setDepthBias(0.0f, 0.0f, 0.0f);
++
++        // The cache describes the encoder's actual state, including utility
++        // draws. The next normal draw must restore anything the clear changed.
++        stateCache.lastViewports.assign(1, viewport);
++        stateCache.lastScissors.assign(1, scissor);
++        stateCache.lastCullMode = MTL::CullModeNone;
++        stateCache.lastDepthBias = 0.0f;
++        stateCache.lastDepthBiasClamp = 0.0f;
++        stateCache.lastSlopeScaledDepthBias = 0.0f;
+     }
+ 
+     void MetalCommandList::handlePendingClears() {
+@@ -2791,9 +2835,6 @@
+         // For partial clears, do our own quad-based clear
+         checkActiveRenderEncoder();
+ 
+-        // Store state cache
+-        const auto previousCache = stateCache;
+-
+         // Process clears
+         activeRenderEncoder->pushDebugGroup(MTLSTR("ColorClear"));
+ 
+@@ -2814,14 +2855,16 @@
+             }
+             MTL::DepthStencilDescriptor *depthStencilDescriptor = MTL::DepthStencilDescriptor::alloc()->init();
+             depthStencilDescriptor->setDepthWriteEnabled(false);
+-            const MTL::DepthStencilState *depthStencilState = device->mtl->newDepthStencilState(depthStencilDescriptor);
++            MTL::DepthStencilState *depthStencilState = device->mtl->newDepthStencilState(depthStencilDescriptor);
+             activeRenderEncoder->setDepthStencilState(depthStencilState);
++            stateCache.lastDepthStencilState = depthStencilState;
+ 
+             depthStencilDescriptor->release();
+         }
+ 
+-        const MTL::RenderPipelineState *pipelineState = device->getOrCreateClearRenderPipelineState(pipelineDesc);
++        MTL::RenderPipelineState *pipelineState = device->getOrCreateClearRenderPipelineState(pipelineDesc);
+         activeRenderEncoder->setRenderPipelineState(pipelineState);
++        stateCache.lastPipelineState = pipelineState;
+ 
+         setCommonClearState();
+         pipelineDesc->release();
+@@ -2858,8 +2901,7 @@
+ 
+         activeRenderEncoder->popDebugGroup();
+ 
+-        // Restore previous state if we had one
+-        stateCache = previousCache;
++        // Rebind requested state against the clear state actually on the encoder.
+         dirtyGraphicsState.setAll();
+     }
+ 
+@@ -2890,9 +2932,6 @@
+ 
+             // For partial clears, do our own quad-based clear
+             checkActiveRenderEncoder();
+-
+-            // Store state cache
+-            auto previousCache = stateCache;
+ 
+             // Process clears
+             activeRenderEncoder->pushDebugGroup(MTLSTR("DepthClear"));
+@@ -2913,14 +2952,18 @@
+                 pipelineColorAttachment->setWriteMask(MTL::ColorWriteMaskNone);
+             }
+ 
+-            const MTL::RenderPipelineState *pipelineState = device->getOrCreateClearRenderPipelineState(pipelineDesc, clearDepth, clearStencil);
++            MTL::RenderPipelineState *pipelineState = device->getOrCreateClearRenderPipelineState(pipelineDesc, clearDepth, clearStencil);
+             activeRenderEncoder->setRenderPipelineState(pipelineState);
++            stateCache.lastPipelineState = pipelineState;
+             if (clearDepth && clearStencil) {
+                 activeRenderEncoder->setDepthStencilState(device->clearDepthStencilState);
++                stateCache.lastDepthStencilState = device->clearDepthStencilState;
+             } else if (clearDepth) {
+                 activeRenderEncoder->setDepthStencilState(device->clearDepthState);
++                stateCache.lastDepthStencilState = device->clearDepthState;
+             } else {
+                 activeRenderEncoder->setDepthStencilState(device->clearStencilState);
++                stateCache.lastDepthStencilState = device->clearStencilState;
+             }
+ 
+             setCommonClearState();
+@@ -2957,8 +3000,7 @@
+ 
+             activeRenderEncoder->popDebugGroup();
+ 
+-            // Restore previous state if we had one
+-            stateCache = previousCache;
++            // Rebind requested state against the clear state actually on the encoder.
+             dirtyGraphicsState.setAll();
+         }
+     }
+@@ -2983,7 +3025,8 @@
          assert(srcLocation.type != RenderTextureCopyType::UNKNOWN);
  
          MetalAutoreleasePool releasePool;
@@ -181,7 +296,7 @@
          checkActiveBlitEncoder();
          activeType = EncoderType::Blit;
  
-@@ -2991,6 +3025,21 @@
+@@ -2991,6 +3034,21 @@
          const MetalTexture *srcTexture = static_cast<const MetalTexture *>(srcLocation.texture);
          const MetalBuffer *dstBuffer = static_cast<const MetalBuffer *>(dstLocation.buffer);
          const MetalBuffer *srcBuffer = static_cast<const MetalBuffer *>(srcLocation.buffer);
@@ -203,7 +318,7 @@
  
          if (dstLocation.type == RenderTextureCopyType::SUBRESOURCE && srcLocation.type == RenderTextureCopyType::PLACED_FOOTPRINT) {
              assert(dstTexture != nullptr);
-@@ -3393,6 +3442,7 @@
+@@ -3393,6 +3451,7 @@
      }
  
      void MetalCommandList::checkForUpdatesInGraphicsState() {
@@ -211,7 +326,7 @@
          // Pipeline state - only update if the actual pipeline object changed
          if (dirtyGraphicsState.pipelineState) {
              if (activeRenderState && activeRenderState->renderPipelineState != stateCache.lastPipelineState) {
-@@ -3492,7 +3542,7 @@
+@@ -3492,7 +3551,7 @@
          // Descriptor sets
          if (dirtyGraphicsState.descriptorSets) {
              if (activeGraphicsPipelineLayout) {
@@ -220,7 +335,7 @@
              }
              dirtyGraphicsState.descriptorSets = 0;
              dirtyGraphicsState.descriptorSetDirtyIndex = MAX_DESCRIPTOR_SET_BINDINGS;
-@@ -3746,7 +3796,7 @@
+@@ -3746,7 +3805,7 @@
  
      MetalPipelineLayout::~MetalPipelineLayout() {}
  
@@ -229,7 +344,7 @@
          for (uint32_t i = startIndex; i < setLayoutCount; i++) {
              if (i >= descriptorSetCount || descriptorSets[i] == nullptr) {
                  continue;
-@@ -3758,6 +3808,31 @@
+@@ -3758,6 +3817,31 @@
              if (!usingResidencySets) {
                  // Track descriptor set for later resource binding
                  encoderDescriptorSets.insert(const_cast<MetalDescriptorSet*>(descriptorSet));

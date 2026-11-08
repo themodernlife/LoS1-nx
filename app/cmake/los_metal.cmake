@@ -48,3 +48,15 @@ foreach(stage vs ps)
         DEPENDS "${src}" VERBATIM)
     target_sources(los_metal_smoke PRIVATE "${out}")
 endforeach()
+
+# Exercise the same adaptive blur helper that the game shader includes, through
+# the real DXC -> SPIR-V -> Metal path and the existing smoke-test bindings.
+set(blur_smoke_src "${CMAKE_SOURCE_DIR}/../tools/macos/metal_blur_smoke_ps.hlsl")
+set(blur_helper_dir "${CMAKE_SOURCE_DIR}/src/renut_engine/gpu/shaders")
+set(blur_smoke_out "${CMAKE_BINARY_DIR}/metal_smoke/metal_blur_smoke_ps.h")
+add_custom_command(OUTPUT "${blur_smoke_out}"
+    COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/metal_smoke"
+    COMMAND ${RENUT_DXC} -T ps_6_0 -E main -spirv -fvk-use-dx-layout
+        -I "${blur_helper_dir}" -Fh "${blur_smoke_out}" -Vn smoke_blur_ps "${blur_smoke_src}"
+    DEPENDS "${blur_smoke_src}" "${blur_helper_dir}/motion_blur_filter.hlsli" VERBATIM)
+target_sources(los_metal_smoke PRIVATE "${blur_smoke_out}")

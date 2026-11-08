@@ -2,6 +2,161 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-08: preserve native Metal work and separate the unresolved tumble issue
+
+- The user confirms ordinary riding blur is fine in the adaptive-sampling
+  build, but the tumble still shears and smudges. Denser sampling is not a
+  sufficient fix. Normal camera history was also restored, so do not attribute
+  the riding recovery solely to adaptive sampling.
+- Preserve the native plume Metal integration, FPS overlay compatibility,
+  stutter diagnostics, clear-state fix, input captures and opt-in sampling
+  experiment on `codex/native-metal`, based on the existing isolated worktree.
+  The main checkout and the prior investigation branch are retained.
+- Prepare a separate GitHub issue in the user's fork with the reproduction,
+  observed versus expected behavior, trial results, corrected camera-history
+  interpretation, measured riding inputs, and outstanding tumble capture and
+  matched Vulkan comparison. No game data, binaries or captures are published.
+- Reuse the already successful ARM64 build, packaging and 32,768-pixel Metal
+  smoke result; this organizational step changes documentation only.
+
+## 2026-11-08: measure riding inputs and test denser motion-blur sampling
+
+- Captured 32 bounded samples with normal camera history, including horse
+  riding. All four inputs and metadata were written without Metal validation
+  errors. Later bursts caught the pause screen after the fall, not the tumble.
+- The prior camera advances by approximately one frame. Replacing the captured
+  inverse matrix with an exact inverse changes the predicted blur extent by
+  less than 0.1 pixel. Those inputs do not support stale camera history or
+  inversion error as the explanation for the large blur.
+- Riding camera blur spans up to roughly 84-87 pixels while using eleven
+  point-filtered scene samples. Object blur spans up to 11-14 pixels in those
+  samples. Sparse scene sampling remains a plausible explanation for repeated
+  outlines; no port-specific root cause has been established.
+- Added an opt-in `LOS_ADAPTIVE_MOTION_BLUR` shader transformation, default off,
+  and authored shared filter. Only scene accumulation changes: linear samples
+  cover the same endpoints with at most one pixel of axis spacing until the
+  257-sample cap. Camera history, velocity, deformation, blur strength and
+  output processing remain intact. Strict identity, structure and digest
+  checks reject unexpected translator output. Generated shaders stay ignored.
+- Transformation preservation and rejection checks pass. The ARM64 game build
+  succeeds with zero shader-override compilation fallbacks. Metal API validation
+  and all 32,768 smoke-test pixels pass, including stationary detail, a
+  continuous 41-pixel trail, constant color at the sample cap, and the existing
+  clear-state regressions. Logs: `adaptive-build.log`, `adaptive-smoke.log` and
+  `adaptive-package.log` under ignored `out/cutscene-shearing/fix/`.
+- Packaged and launched the candidate (`los_022.log`) with the same isolated
+  save profile, normal camera history and deformation defaults, blur enabled,
+  diagnostics disabled, and the FPS overlay retained. Packaged and build binary
+  SHA256 values match. The user handles riding/tumble validation; visual success
+  and gameplay performance are not yet established. The main checkout is clean.
+
+## 2026-11-08: correct the camera-isolation assumption and capture motion inputs
+
+- The user's horse-riding screenshot shows smeared actors against sharper
+  scenery even with deformation velocity zero. The log confirms c15 = 0.
+  This rejects that extra deformation contribution as a complete explanation.
+- Corrected an earlier claim: `RT_PixelMotionBlurSkipCamera` also changes the
+  previous camera used in object-velocity world/view/projection matrices. The
+  secondary interface at blur object +4 reaches the same history field +88
+  and matrix +24 as the postprocess. It preserves old object poses/bones but
+  removes camera tracking from their previous projection. This can itself
+  smear a moving rider that the camera follows. The earlier runs were not
+  isolated camera-postprocess tests; do not use them to infer bad bone data.
+- Remove the SkipCamera and deformation overrides for further investigation.
+  Add opt-in, bounded object-velocity constant logging and raw input captures
+  so the next run can measure actual motion data with normal camera history.
+  The user continues to handle gameplay navigation. No motion-blur root-cause
+  correction has yet been established; the independently verified Metal
+  clear-state correction is retained.
+- Built and packaged the diagnostics. The opt-in texture capture copies s0,
+  s1, s3 RGBA and s2 float depth before the blur draw, maps only after existing
+  frame fences, and writes through a bounded background queue. Triggered
+  bursts contain eight samples six frames apart, up to 32 per run. Metadata
+  includes effective channel mapping and literal-corrected c0..15/c253.
+- Launched the normal-history run (`los_021.log`) in the same isolated profile.
+  Eight startup/menu samples captured all four inputs successfully with Metal
+  API validation enabled and no capture/validation errors. A local analyzer's
+  stationary and known-translation checks passed; the menu's current/inverse
+  matrix product matches identity within 1.4e-6. Actual riding/cutscene input
+  capture is pending the user's navigation, requested asynchronously.
+
+## 2026-11-08: reject clear-state correction as the cutscene solution
+
+- The user tested the corrected backend with ordinary camera blur restored
+  and reported that the tumble blur was incorrect again. The independently
+  verified Metal clear-state correction remains, but it does not solve the
+  reported cutscene trails. Do not describe it as the cutscene fix.
+- Next session-only isolation retains object motion blur, restores camera
+  suppression, and zeros only the additive deformation blur velocity:
+  `RT_PixelMotionBlur=1;RT_PixelMotionBlurSkipCamera=1000000;RT_DeformationVelScale=0`.
+  The shader's c15 contributes additional sample spacing while c14 controls
+  the separate deformation warp; zeroing c15 leaves ordinary object blur and
+  that warp enabled. This tests a remaining explanation for the excessive
+  blur reported in the earlier camera-isolation warg scene.
+- Reused the isolated profile explicitly. No rebuild or source correction
+  accompanies this diagnostic launch. The user handles scene navigation and
+  reports the visual result; the underlying motion-input issue remains open.
+
+## 2026-11-08: correct Metal drawing state after rectangle clears
+
+- User validation of the camera-isolation run: the tumble looked better,
+  but the warg scene remained very blurry. Its logged deformation blur
+  contribution was active (c15 = 0.02), unlike the earlier menu capture.
+  This does not establish which remaining input is incorrect.
+- Found and fixed a reproducible Metal backend defect: rectangle color/depth
+  clears bound their own pipeline, depth state, viewport, scissor, culling
+  and depth bias, then restored the old cache without restoring the encoder.
+  A subsequent draw requesting unchanged state could retain the clear state.
+  The cache now records what the clear actually bound so normal draws restore
+  their requested state. Preserved untouched state and existing other fixes.
+- Extended the offscreen Metal test with draw/rectangle-clear/draw sequences
+  that deliberately keep the encoder and requested pipeline unchanged. Before
+  the fix, the color and depth-pass cases each failed 1,024 pixels. Afterward,
+  all 20,480 clear/draw/depth-rejection pixels pass with Metal API validation
+  enabled. The ARM64 game build and packaging also pass.
+- Regenerated the tracked plume dependency patch and verified it reproduces
+  both ignored native source files byte-for-byte from the pinned originals.
+  No game data or generated shaders are included in the change.
+- The relation to the reported blur is still pending user validation. Launched
+  the fixed app with normal pixel motion blur and camera history restored,
+  with no blur-strength reduction. `los_019.log` confirms native Metal and
+  the motion-blur/camera-history settings. The packaged binary hash matches
+  the build. The Mac was locked during the window check; the user handles
+  unlocking and gameplay navigation.
+- The prior direct launch used the default save root despite the bundle's
+  config value (paths are resolved before that config is read). Copied its
+  latest save state to a new isolated test profile and pass that root
+  explicitly on the command line. No saves were copied back or overwritten.
+  The main source checkout remains clean.
+
+## 2026-11-08: isolate motion blur and hand gameplay validation to the user
+
+- The user confirmed that the session-only `RT_PixelMotionBlur=0` override
+  removes the repeated outlines. This disables the effect; it is a verified
+  workaround, not an underlying renderer fix.
+- Added bounded, opt-in `LOS_BLUR_DIAG` logging of the blur pass's captured
+  fetch constants and velocity/deformation scalars. Built and packaged the
+  ARM64 Metal app successfully. The recorded pass uses four 1280x720 inputs,
+  one mip each, zero LOD bias and zero texture exponent adjustment. These
+  observations exclude the previously suspected bias/exponent omissions for
+  that captured pass. Logging is inactive by default.
+- Audited the original shader instructions, translated math, texture formats,
+  and swizzles. The eleven point-filtered scene samples are guest-selected.
+  No relevant translation or Metal format defect was established. A Vulkan
+  capture shows blur in other scenes but does not provide a matched tumble.
+- Traced `RT_PixelMotionBlurSkipCamera` to a frame countdown that invalidates
+  camera history, causing the blur pass to use the current camera matrix as
+  its previous matrix. A large positive session override therefore isolates
+  camera-derived blur while retaining the object-velocity pass. The HQ
+  variable has no verified runtime consumer in this Xbox build.
+- Launched a camera-isolation test for user validation with pixel motion
+  blur enabled and `RT_PixelMotionBlurSkipCamera=1000000`. This is a diagnostic,
+  not a claimed fix. Per the user's direction, stop navigating gameplay and
+  let them report whether the outlines remain. Keep all changes in the
+  experimental worktree and leave main and the user's save files untouched.
+  `los_018.log` confirms native Metal and both overrides applied; the game
+  window and FPS overlay were verified without navigating gameplay.
+
 ## 2026-11-08: compare cutscene ghosting with the supplied reference video
 
 - Inspected the user's YouTube reference around 3:15 and the matching tumble

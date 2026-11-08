@@ -227,24 +227,34 @@ function(renut_xenos_shader_cache TARGET)
     # banjo-nx (banjo_gpu_early_alpha, package 27): tools/renut_early_alpha.py between two runs of the translator: the
     # first dumps the pixel shaders' HLSL (BANJO_HLSL_DUMP_ONLY), the pass gives the alpha-tested ones their early alpha
     # copy (self-checked against the original), the second compiles them (BANJO_HLSL_OVERRIDE). The dumps are game
-    # data (build tree only). OFF: one run, as before.
+    # data (build tree only). With both transformations off, compile in one run.
     option(BANJO_RENUT_EARLY_ALPHA "Early alpha copies in Renut's pixel shaders (tools/renut_early_alpha.py)" ON)
+    option(LOS_ADAPTIVE_MOTION_BLUR "Experimental denser motion-blur sampling with unchanged velocity and extent" OFF)
     set(early_alpha_dir "${RENUT_GPU_GEN_DIR}/early_alpha_hlsl")
-    if(BANJO_RENUT_EARLY_ALPHA)
+    set(early_alpha_commands)
+    set(early_alpha_env)
+    set(early_alpha_depends)
+    if(BANJO_RENUT_EARLY_ALPHA OR LOS_ADAPTIVE_MOTION_BLUR)
         set(early_alpha_commands
             COMMAND ${CMAKE_COMMAND} -E rm -rf "${early_alpha_dir}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${early_alpha_dir}"
             COMMAND ${CMAKE_COMMAND} -E env BANJO_HLSL_DUMP_ONLY=1 "${recomp_exe}" "${RENUT_SHADER_DUMP_DIR}"
                     "${RENUT_GPU_GEN_DIR}/early_alpha_pass1.cpp" "${RENUT_SHADER_COMMON_DIR}/shader_common.h"
-                    "${early_alpha_dir}"
-            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/renut_early_alpha.py" "${early_alpha_dir}")
+                    "${early_alpha_dir}")
         set(early_alpha_env ${CMAKE_COMMAND} -E env "BANJO_HLSL_OVERRIDE=${early_alpha_dir}")
-        set(early_alpha_depends "${CMAKE_SOURCE_DIR}/../tools/renut_early_alpha.py"
-                                "${CMAKE_SOURCE_DIR}/../tools/early_alpha.py")
-    else()
-        set(early_alpha_commands)
-        set(early_alpha_env)
-        set(early_alpha_depends)
+    endif()
+    if(BANJO_RENUT_EARLY_ALPHA)
+        list(APPEND early_alpha_commands
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/renut_early_alpha.py" "${early_alpha_dir}")
+        list(APPEND early_alpha_depends "${CMAKE_SOURCE_DIR}/../tools/renut_early_alpha.py"
+                                       "${CMAKE_SOURCE_DIR}/../tools/early_alpha.py")
+    endif()
+    if(LOS_ADAPTIVE_MOTION_BLUR)
+        set(motion_blur_helper "${RENUT_GPU_DIR}/shaders/motion_blur_filter.hlsli")
+        list(APPEND early_alpha_commands
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/los_motion_blur.py" "${early_alpha_dir}"
+                    --helper "${motion_blur_helper}")
+        list(APPEND early_alpha_depends "${CMAKE_SOURCE_DIR}/../tools/los_motion_blur.py" "${motion_blur_helper}")
     endif()
     add_custom_command(
         OUTPUT "${cache_cpp}"
@@ -314,6 +324,7 @@ function(renut_gpu_setup TARGET)
         ${RENUT_GPU_DIR}/overlay/overlay_drawer.cpp
         ${RENUT_GPU_DIR}/overlay/overlay_ui.cpp
         # Draws, targets, textures, shaders and formats.
+        ${RENUT_GPU_DIR}/render/blur_capture.cpp
         ${RENUT_GPU_DIR}/render/draw.cpp
         ${RENUT_GPU_DIR}/render/format.cpp
         ${RENUT_GPU_DIR}/render/graphics_options.cpp

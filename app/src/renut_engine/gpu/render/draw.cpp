@@ -34,6 +34,7 @@
 #include "renut_engine/gpu/guest/command_buffers.h"
 #include "renut_engine/gpu/d3d/d3d.h"
 #include "renut_engine/gpu/render/format.h"
+#include "renut_engine/gpu/render/blur_capture.h"
 #include "renut_engine/gpu/guest/guest_memory.h"
 #include "renut_engine/gpu/sa2_line_compare.h"
 #include "renut_engine/gpu/guest/guest_records.h"
@@ -1924,6 +1925,145 @@ void PushSharedConstants(plume::RenderCommandList *cmd, const SharedConstants &s
 
 TextureFetch DeviceTextureFetch(const d3d::Device &dev, u32 r) {
   return TextureFetch::FromGuest(dev.m_Constants.TextureFetch[r]);
+}
+
+// Opt-in motion-blur input inspection. Read the same captured device/constants
+// as the draw, without binding resources or changing renderer state. Keep logs
+// bounded and omit identical samples so this can run through a level transition.
+void LogBlurInputs(const GuestDevice &device, const FloatConstants &constants, const Targets &targets) {
+  static std::array<u32, 42> previous{};
+  static uint32_t samples = 0;
+  static auto last = std::chrono::steady_clock::time_point{};
+  const auto now = std::chrono::steady_clock::now();
+  if (samples >= 300 || (samples && now - last < std::chrono::seconds(1)))
+    return;
+
+  std::array<u32, 42> words{};
+  TextureFetch fetches[4];
+  for (u32 slot = 0; slot < 4; ++slot) {
+    fetches[slot] = DeviceTextureFetch(device.dev(), slot);
+    std::memcpy(words.data() + slot * 6, fetches[slot].dword, sizeof(fetches[slot].dword));
+  }
+  for (u32 reg = 0; reg < 4; ++reg) {
+    u32 lanes[4];
+    std::memcpy(lanes, constants.Register(12 + reg), sizeof(lanes));
+    for (u32 lane = 0; lane < 4; ++lane)
+      words[24 + reg * 4 + lane] = std::byteswap(lanes[lane]);
+  }
+  words[40] = targets.width;
+  words[41] = targets.height;
+  if (samples && words == previous)
+    return;
+  previous = words;
+  last = now;
+  ++samples;
+  RGPU_INFO("[blurdiag] sample {} frame {} PS 7838FCCDD9A82460 target {}x{} scale {}",
+            samples, TextureFrameLocked(), targets.width, targets.height, targets.scale.Factor());
+  for (u32 slot = 0; slot < 4; ++slot) {
+    const TextureFetch &f = fetches[slot];
+    u32 width, height, depth;
+    f.Size(width, height, depth);
+    const int32_t exponent = int32_t(f.dword[3] << 13) >> 26;
+    RGPU_INFO("[blurdiag] s{} words {:08X} {:08X} {:08X} {:08X} {:08X} {:08X} "
+              "size {}x{}x{} format {} mip {}..{} exp {} signs {} {} {} {} filters {}/{}/{} lod_bias {}",
+              slot, f.dword[0], f.dword[1], f.dword[2], f.dword[3], f.dword[4], f.dword[5],
+              width, height, depth, u32(f.Format()), f.MinMipLevel(), f.MaxMipLevel(), exponent,
+              u32(f.Sign(0)), u32(f.Sign(1)), u32(f.Sign(2)), u32(f.Sign(3)),
+              u32(f.MagFilter()), u32(f.MinFilter()), u32(f.MipFilter()), float(f.LodBias()) / 32.0f);
+  }
+  for (u32 reg = 0; reg < 4; ++reg) {
+    const u32 *v = words.data() + 24 + reg * 4;
+    RGPU_INFO("[blurdiag] c{} = ({}, {}, {}, {})", 12 + reg, std::bit_cast<float>(v[0]),
+              std::bit_cast<float>(v[1]), std::bit_cast<float>(v[2]), std::bit_cast<float>(v[3]));
+  }
+}
+
+// Object-velocity inputs, sampled from the deferred draw's constants rather than
+// the live guest device. Inspect at most four distinct draws every 60 frames,
+// for 300 sampled frames. Palette statistics include all 38 slots; a mesh may
+// reference fewer, so an outlier in an unused slot alone is not evidence of a bug.
+void LogVelocityInputs(uint64_t vs_hash, const FloatConstants &vs, const FloatConstants &ps,
+                       const Targets &targets, const DrawCall &call) {
+  static uint64_t sampled_frame = ~uint64_t(0);
+  static uint32_t sampled_frames = 0;
+  static uint32_t draws = 0;
+  static std::array<uint64_t, 4> seen{};
+  const uint64_t frame = TextureFrameLocked();
+  if (frame != sampled_frame) {
+    if (sampled_frames >= 300 || (sampled_frames && frame - sampled_frame < 60))
+      return;
+    sampled_frame = frame;
+    ++sampled_frames;
+    draws = 0;
+  }
+  if (draws >= seen.size())
+    return;
+
+  const bool skinned = vs_hash == 0x5634CED53C98621Full || vs_hash == 0xB86336C59C49A172ull;
+  const bool rigid = vs_hash == 0x8A66AC25E045BD8Aull;
+  if (!skinned && !rigid)
+    return;
+  auto read = [](const FloatConstants &constants, u32 first, float *out, u32 count) {
+    for (u32 reg = 0; reg < count; ++reg) {
+      u32 lanes[4];
+      std::memcpy(lanes, constants.Register(first + reg), sizeof(lanes));
+      for (u32 lane = 0; lane < 4; ++lane)
+        out[reg * 4 + lane] = std::bit_cast<float>(std::byteswap(lanes[lane]));
+    }
+  };
+  std::array<float, 16> current_wvp{}, last_wvp{};
+  const u32 last_reg = skinned ? 228 : 0;
+  const u32 current_reg = skinned ? 232 : 4;
+  read(vs, current_reg, current_wvp.data(), 4);
+  read(vs, last_reg, last_wvp.data(), 4);
+  std::array<float, 456> bones{}, last_bones{};
+  if (skinned) {
+    read(vs, 0, bones.data(), 114);
+    read(vs, 114, last_bones.data(), 114);
+  }
+  const uint64_t bones_hash = XXH3_64bits(bones.data(), sizeof(bones));
+  const uint64_t last_bones_hash = XXH3_64bits(last_bones.data(), sizeof(last_bones));
+  const std::array<uint64_t, 5> key = {
+      vs_hash, XXH3_64bits(current_wvp.data(), sizeof(current_wvp)),
+      XXH3_64bits(last_wvp.data(), sizeof(last_wvp)), bones_hash, last_bones_hash};
+  const uint64_t hash = XXH3_64bits(key.data(), sizeof(key));
+  if (std::find(seen.begin(), seen.begin() + draws, hash) != seen.begin() + draws)
+    return;
+  seen[draws++] = hash;
+  float scale[4];
+  read(ps, 0, scale, 1);
+  RGPU_INFO("[velocitydiag] sample {} frame {} draw {} VS {:016X} PS CFA9F37557D702F5 "
+            "target {}x{} count {} start_index {} start_vertex {} base_vertex {} c0.x {}",
+            sampled_frames, frame, draws, vs_hash, targets.width, targets.height, call.count,
+            call.start_index, call.start_vertex, call.base_vertex, scale[0]);
+  for (u32 row = 0; row < 4; ++row) {
+    const float *c = current_wvp.data() + row * 4;
+    const float *p = last_wvp.data() + row * 4;
+    RGPU_INFO("[velocitydiag] WVP row {} current c{} ({}, {}, {}, {}) last c{} ({}, {}, {}, {})",
+              row, current_reg + row, c[0], c[1], c[2], c[3], last_reg + row, p[0], p[1], p[2], p[3]);
+  }
+  if (skinned) {
+    float max_diff = 0.0f, max_translation_diff = 0.0f;
+    u32 current_nonfinite = 0, last_nonfinite = 0, max_index = 0;
+    for (u32 i = 0; i < bones.size(); ++i) {
+      current_nonfinite += !std::isfinite(bones[i]);
+      last_nonfinite += !std::isfinite(last_bones[i]);
+      if (!std::isfinite(bones[i]) || !std::isfinite(last_bones[i]))
+        continue;
+      const float diff = std::abs(bones[i] - last_bones[i]);
+      if (diff > max_diff) {
+        max_diff = diff;
+        max_index = i;
+      }
+      if (i % 4 == 3)
+        max_translation_diff = std::max(max_translation_diff, diff);
+    }
+    RGPU_INFO("[velocitydiag] palette slots 38 current_hash {:016X} last_hash {:016X} "
+              "nonfinite {}/{} max_diff {} at bone {} row {} lane {} values {}/{} max_translation_diff {}",
+              bones_hash, last_bones_hash, current_nonfinite, last_nonfinite, max_diff,
+              max_index / 12, (max_index / 4) % 3, max_index % 4, bones[max_index], last_bones[max_index],
+              max_translation_diff);
+  }
 }
 
 // banjo-nx (deko3d renderer, docs/deko3d-renderer.md): the sampler words hold the sampler id where a texture handle has
@@ -4205,6 +4345,18 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
       g_targets_reuse.targets = targets;
     }
   }
+  static const bool blur_diag = [] {
+    const char *value = std::getenv("LOS_BLUR_DIAG");
+    return value && *value && std::strcmp(value, "0") != 0;
+  }();
+  if (blur_diag && ps && ps->hash == 0x7838FCCDD9A82460ull)
+    LogBlurInputs(device, ps_constants, targets);
+  static const bool velocity_diag = [] {
+    const char *value = std::getenv("LOS_VELOCITY_DIAG");
+    return value && *value && std::strcmp(value, "0") != 0;
+  }();
+  if ((blur_diag || velocity_diag) && ps && ps->hash == 0xCFA9F37557D702F5ull)
+    LogVelocityInputs(vs->hash, vs_constants, ps_constants, targets, call);
   // banjo-nx (2026-10-20, NOT exact, banjo_renut_fur_shells = N > 1, the user's call): the fur family's meshes are drawn
   // once a shell, shell by shell (each shell draws every part of the body: RenderDoc of Ryujinx shows the same four
   // parts repeating); of each part's draws in a frame (the same shaders and index range) every Nth is drawn, the first
@@ -4275,6 +4427,9 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   sc.flt_max = std::numeric_limits<float>::max();  // banjo-nx: 0x7F7FFFFF, the clamps' bound (shader_common.h)
   const u32 texture_mask =
       (vs->entry ? vs->entry->textureFetchMask : 0) | (ps && ps->entry ? ps->entry->textureFetchMask : 0);
+  const bool blur_capture_due = ps && ps->hash == 0x7838FCCDD9A82460ull &&
+                                BlurCaptureDueLocked(TextureFrameLocked());
+  static BindEffects blur_capture_effects[32];
   g_handover_targets = &targets;  // banjo-nx (2026-10-19, banjo_deko3d_depth_handover)
   // sa2-nx (2026-10-20, sa2_renut_chain_reuse): the previous chain draw's texture and sampler words when FillTextures'
   // memo would answer every bound slot as it did then: the device's fetch constants and texture words unchanged
@@ -4338,7 +4493,8 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
     }
   } else {
     bool all_memo = false;
-    FillTextures(device, texture_mask, sc, targets_reuse_on ? treuse.fx : nullptr,
+    FillTextures(device, texture_mask, sc,
+                 targets_reuse_on ? treuse.fx : blur_capture_due ? blur_capture_effects : nullptr,
                  targets_reuse_on ? &all_memo : nullptr);
     if (targets_reuse_on) {
       // Kept for the next draw only when every slot is one the memo keys (a header), as it then answers them all.
@@ -4367,6 +4523,39 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   if (textures_reused && targets_reuse_on)
     treuse.seq = chain.seq;
   g_handover_targets = nullptr;
+
+  if (blur_capture_due) {
+    BlurCaptureDraw capture;
+    capture.frame = TextureFrameLocked();
+    capture.width = targets.width;
+    capture.height = targets.height;
+    capture.scale = targets.scale.Factor();
+    for (u32 r = 0; r < 4; ++r) {
+      capture.fetches[r] = DeviceTextureFetch(device.dev(), r);
+      capture.texture_va[r] = device.U32(d3d::kDeviceOffsetTextures + r * 4);
+      capture.texture_words[r] = sc.texture_indices[0][r];
+    }
+    for (u32 r = 0; r < 17; ++r) {
+      u32 words[4];
+      std::memcpy(words, ps_constants.Register(r < 16 ? r : 253), sizeof(words));
+      u32 *dest = r < 16 ? capture.constants[r] : capture.c253;
+      for (u32 lane = 0; lane < 4; ++lane)
+        dest[lane] = std::byteswap(words[lane]);
+    }
+    // Match UploadFloatConstants: the shader's literal registers replace the
+    // guest bytes. In particular, c253.x/y are literals read from the buffer.
+    if (ps->entry) {
+      for (u32 i = 0; i < ps->entry->literalCount; ++i) {
+        const ShaderLiteral &literal = g_shaderLiterals[ps->entry->literalOffset + i];
+        if (literal.reg < 16)
+          std::memcpy(capture.constants[literal.reg], literal.value, sizeof(literal.value));
+        else if (literal.reg == 253)
+          std::memcpy(capture.c253, literal.value, sizeof(literal.value));
+      }
+    }
+    if (QueueBlurCaptureLocked(capture, targets_reuse_on ? treuse.fx : blur_capture_effects))
+      g_bound.framebuffer = nullptr;
+  }
 
   const d3d::Device &dev = device.dev();
   const u8 *bools = reinterpret_cast<const u8 *>(&dev.m_Constants.VertexShaderB[0]);

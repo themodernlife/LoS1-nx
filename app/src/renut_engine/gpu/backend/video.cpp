@@ -33,6 +33,7 @@
 #include "renut_engine/gpu/log.h"
 #include "renut_engine/gpu/backend/platform.h"
 #include "renut_engine/gpu/render/pipeline.h"
+#include "renut_engine/gpu/render/blur_capture.h"
 #include "renut_engine/gpu/backend/render_thread.h"
 #include "renut_engine/gpu/backend/video_internal.h"
 #include "renut_engine/gpu/banjo_renut_tuning.h"
@@ -769,6 +770,7 @@ void WaitSlotLocked(VideoState &s, uint32_t slot) {
   }
   NoteGpuDoneSeenLocked(slot, true);
   s.submitted[slot] = false;
+  CompleteBlurCapturesLocked(slot);
   CollectGpuTime(s, slot);
   gpu_profile::Collect(s, slot);
   // banjo-nx (2026-10-19, banjo_deko3d_kick_submit): every list of the slot's frame has run: its kick lists are free.
@@ -810,6 +812,7 @@ void SubmitAndWaitLocked(VideoState &s) {
     s.queue->waitForCommandFence(s.fences[cur].get());
   }
   s.submitted[cur] = false;
+  CompleteBlurCapturesLocked(cur);
   // The slot's upload ring and retired objects stay: the rest of the frame
   // records into the same slot. banjo-nx: every list of it has run, so its first list is free again.
   s.kick_lists_used[cur] = 0;
