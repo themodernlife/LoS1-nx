@@ -2995,6 +2995,32 @@ const u32 *BoolSpecMask(const ShaderRecord *r) {
   return r->bool_spec_mask;
 }
 
+// Adapted from reNut e5c57e7, SetDepthBias. Its D24FS8-to-D32 conversion
+// preserves the exponent-relative offset; D24S8 on D32 uses a clamp to express
+// an absolute depth-range offset. LoS sub_824962E0 writes these same offsets.
+void SetDepthBias(const GuestDevice &device, const HostSurface &depth, PipelineKey &key) {
+  const u32 mode = u32(device.dev().m_ControlPacket.ModeControl);
+  if (!(mode & 0x1800))
+    return;
+  // Prefer the face that survives culling. The ordinary D3D setter writes
+  // the same value to both faces, as in upstream reNut.
+  const bool front = (mode & 0x800) && (!(mode & 1) || !(mode & 0x1000));
+  const float offset = device.F32(front ? d3d::kDeviceOffsetDepthBiasFront
+                                       : d3d::kDeviceOffsetDepthBiasBack);
+  if (offset == 0.0f || !std::isfinite(offset))
+    return;
+  if (depth.format == plume::RenderFormat::D24_UNORM_S8_UINT ||
+      GpuTextureFormat(depth.format_word & 0x3F) == GpuTextureFormat::Fmt24_8_Float) {
+    const double units = depth.format == plume::RenderFormat::D24_UNORM_S8_UINT
+                             ? 16777215.0 : 8388608.0;
+    key.depth_bias = int32_t(std::round(std::clamp(double(offset) * units,
+                                                -2147483648.0, 2147483647.0)));
+  } else {
+    key.depth_bias = offset > 0.0f ? (1 << 30) : -(1 << 30);
+    key.depth_bias_clamp = offset;
+  }
+}
+
 PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const ShaderRecord *ps,
                     const VertexDeclarationRecord *declaration, const Targets &t, u32 primitive,
                     bool per_instance, const u32 *booleans, u32 alpha_test_func) {
@@ -3035,6 +3061,8 @@ PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const Sha
   key.stencil_ref_mask = t.depth ? u32(dev.m_ValuesPacket.StencilRefMask) & 0xFFFFFF : 0;
   key.stencil_ref_mask_bf = t.depth ? u32(dev.m_ValuesPacket.StencilRefMaskBF) & 0xFFFFFF : 0;
   key.mode_control = u32(cp.ModeControl) & 0x7;
+  if (t.depth)
+    SetDepthBias(device, *t.depth, key);
   key.alpha_to_coverage = (u32(cp.ColorControl) >> 4) & 1;
   if (primitive == kRectangleList) {
     if (State().rectangle_list_gs)
@@ -4616,6 +4644,7 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   const int ab_off = banjo::renut_gpu::g_ab_off.load(std::memory_order_relaxed);
   const uint64_t surface_epoch = SurfaceEpochLocked();
   bool reused = reuse_on && hint.seq && hint.seq == reuse.seq + 1 && !ChainChanged(hint, 10112, 10599) &&
+                !ChainChanged(hint, d3d::kDeviceOffsetDepthBiasFront, d3d::kDeviceOffsetDepthBiasBack + 3) &&
                 reuse.vs_entry == vs->entry && reuse.ps_entry == ps_entry &&
                 reuse.layout_hash == declaration->layout_hash && reuse.primitive == call.primitive &&
                 reuse.per_instance == geometry.per_instance && reuse.alpha_test_func == sc.alpha_test_func &&

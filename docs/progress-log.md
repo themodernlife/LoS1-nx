@@ -2,6 +2,171 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-10: isolate the Renut investigation from main
+
+- Preserve the existing depth-bias/position-dot candidate, GPU capture tools,
+  and 21-sample blur experiment on `codex/renut-blur-investigation`.
+- This is an organizational snapshot of existing work, not a new fix or
+  acceptance result. No implementation code was changed or rebuilt here.
+- Main remains at `95fc9d1`. Existing local builds, captures, dependencies,
+  profiles, and test apps remain in the original checkout's ignored paths;
+  they must not be assumed to match main after the source checkout switches.
+
+## 2026-11-10: reduced blur sampling after the user's performance test
+
+- The user reported the 65-sample experiment looked acceptable but ran at a
+  very low frame rate. This is qualitative feedback, not a measured benchmark
+  or proof that the motion inputs match the original console.
+- Reduced the guarded kernel in `tools/renut_dense_motion_blur.py` to 21 samples,
+  with matching spacing and weight normalization. It keeps the same endpoints
+  and halves the original eleven-sample spacing, using about one-third of the
+  scene reads of the 65-sample version. Actual frame-rate improvement is pending.
+- Updated the CMake option description and capture guide to describe the new
+  test and the reason for reducing its cost. The original shader boundaries
+  and rejection guards passed validation. The 65-sample app is preserved for
+  comparison; the new test uses a separate checkpoint copy.
+- Release ARM64 build passed with no shader override fallback. Comparing all
+  2,006 cache entries against the original baseline again found only PS
+  `7838FCCDD9A82460` changed. Packaged and launched `Dense Blur 21 Test.app`;
+  verified its startup logo renders. Build, cache comparison, binary hash,
+  launch arguments, and runtime log are in `out/dense-blur-21-20261110/`.
+  Horse-fall quality and frame rate remain for the user's comparison.
+
+## 2026-11-10: built the denser motion-blur sampling experiment
+
+- Added `tools/renut_dense_motion_blur.py` to replace only the eleven scene
+  samples in PS `7838fccdd9a82460` with 65 uniform samples over the same endpoints
+  and with the original total weight. Motion, camera, deformation, alpha-test,
+  and blend calculations remain unchanged. A source-block digest rejects an
+  unexpected translator output instead of silently applying a stale override.
+- Added default-off `LOS_RENUT_DENSE_MOTION_BLUR` in `gpu.cmake`, using the existing
+  HLSL override workflow, and documented enable/disable steps in
+  `docs/macos-gpu-capture.md`. This makes the sampling-quality experiment
+  reversible without editing game-derived generated sources in the repository.
+- Enabled the option locally and completed the Release ARM64 `los` build.
+  Guard checks reject changed input and reapplication; preserved shader prefix
+  and suffix match the baseline. Compared all 2,006 shader cache entries:
+  only the intended pixel shader changed. Existing compiler/linker warnings
+  remain. Logs and verification records are in ignored `out/dense-blur-20261110/`.
+- Packaged and launched separate `Dense Blur Test.app`, with a matching binary
+  hash and a writable copy of the preserved capture checkpoint. Its `.command`
+  launcher selects that isolated profile. Verified the rendered title screen;
+  the prior ReNut Update app remains available for comparison.
+- Next: user compares the horse fall and checks frame rate. Denser sampling
+  may reduce repeated outlines but costs extra texture reads; this is not yet
+  a confirmed runtime visual fix or a validation of the motion values.
+
+## 2026-11-09: isolated the captured blur pass and reproduced its output
+
+- Mapped guest PS `7838fccdd9a82460` to captured Metal source
+  `4C47F8F499E9DA79`, pipeline `0x131562400`, and first-frame draw 4390.
+  Xcode did not retain the guest shader hashes in pipeline names. Read-only
+  decoding of the capture's zlib store/index and resource records established
+  the mapping; Xcode verified the matching draw and resource bindings.
+- Exported raw KTX scene, velocity RGBA, sampled depth, deformation, and output
+  textures at that draw. These are local game-derived artifacts under ignored
+  `out/gpu-captures/20261109-215443-721425/blur-analysis/`, not source assets.
+  Dynamic offsets and constants are recorded there in JSON. The character is
+  sharp in the scene input and blurred in this pass's output.
+- A local NumPy reconstruction of the eleven-tap pass agrees with the raw GPU
+  output to about 0.404/255 mean absolute channel error (99th percentile 3.85).
+  This is an approximate analytical reproduction, not bit-exact GPU emulation.
+  Controlled variants isolate camera, object, and deformation contributions.
+- At this frame, the object branch covers about 26.8% of pixels. Its full
+  sampling span has median 39.5 pixels and 99th percentile 70.7 pixels.
+  Velocity alpha is preserved and nonconstant. Deformation has nonzero values
+  in only 0.28% of texels. Coherent velocity coverage in this frame does not
+  establish that the depth-equality issue is fixed generally.
+- Tested 65 samples over the same endpoints in the offline reproduction. It
+  smooths discrete repeated outlines while retaining strong blur. This suggests
+  sampling density as a targeted quality experiment; it does not prove the
+  supplied motion values are correct or that the original console looks alike.
+  `comparison.png`, `findings.json`, `analyze.py`, and `dense.py` preserve the
+  comparison and local analysis. No new runtime shader change was made.
+
+## 2026-11-09: captured and replayed the blurred horse fall
+
+- The user triggered the prepared 60-frame capture. Waited for finalized
+  metadata and closure of the game's trace file handles; the resulting local
+  `out/gpu-captures/20261109-215443-721425/scene.gputrace` occupies about 13 GB.
+- Replayed successfully in Xcode: 179 command buffers, 5,092 render encoders,
+  32,560 draw calls. The first present, command 6241, has an attachment showing
+  Gabriel falling with visible motion blur. The final summary image is the
+  subsequent fight; use the early present attachments to inspect the fall.
+- The capture now provides a repeatable GPU reproduction of the failing scene.
+  No additional shader changes were made and no root cause is established.
+  Next: locate the blur draw preceding present 6241, inspect its scene/depth,
+  object velocity (including alpha), deformation inputs, and camera matrices.
+  Local `verification.json` records the trace UUID and replay findings.
+
+## 2026-11-09: repeatable GPU capture for motion-blur investigation
+
+- The user's horse-knockoff screenshot still shows severe blur after the
+  depth/position experiment. No further shader fix is claimed.
+- Added `tools/macos/capture_gpu.py`: previously this workflow required manual
+  capture environment setup; now it launches the chosen app with MoltenVK's
+  on-demand capture, finds its process-owned FIFO, preserves a starting profile,
+  uses a separate writable copy, and records executable/profile hashes and args.
+  All captures, saves, logs, and the compiled helper stay under ignored `out/`.
+- Added `tools/macos/capture_hotkey.m`: Control+Option+B requests 60 subsequent
+  frames by default, without input-monitoring or Accessibility permission.
+  Existing traces are protected from overwrite; the helper exits with the game.
+  The Python CLI can also request a bounded frame count for smoke testing.
+- Validated helper compilation/registration, Python syntax, and a two-frame
+  title-screen capture using bundled MoltenVK 1.4.1. Opened the trace in Xcode
+  and replayed it successfully: Frame ready, five command buffers, six draws.
+  This establishes capture/replay, not reproduction of the horse scene yet.
+- Local session `out/gpu-captures/20261109-215443-721425/` retains the verified
+  `menu-smoke.gputrace`; the running game is armed for `scene.gputrace`.
+  Next: user captures the fall; inspect motion/depth/deformation inputs and the
+  final blur pass. Captured GPU work can be replayed, while C++ renderer changes
+  still require a new capture. This is not a gameplay save-state implementation.
+
+## 2026-11-09: targeted reNut depth and shader experiment
+
+- On fork `main`, adapted two changes from reNut `e5c57e7` and its
+  reblue-XenosRecomp dependency `bf1b365`. This is a visual test candidate,
+  not a confirmed repair for Wargs or the horse-knockoff cutscene.
+- `app/src/renut_engine/gpu/d3d/d3d.h`: names the front/back depth-bias words.
+  Evidence: the local generated LoS `sub_824962E0` stores the same input at
+  10836/10844 (`0x2A54`/`0x2A5C`) and enables ModeControl bits 11/12.
+  The inherited native N&B state code is not evidence of LoS's active setter;
+  this check used LoS's original translated function. No new hook or override.
+- `render/draw.cpp`: previously ignored constant polygon offset; now converts
+  it into the host depth bias using reNut's D24FS8/D32 and D24S8/D32 handling,
+  with native D24 handling retained for deko3d. Selects the surviving face,
+  rejects nonfinite values, and bounds integer conversion. Pipeline-key reuse
+  now checks the bias words, so an offset-only change cannot reuse stale state.
+  Slope-scaled bias remains outside this constant-bias port, as in reNut's
+  source implementation. Its effect on LoS remains unverified.
+- `render/pipeline.h` and `render/pipeline.cpp`: include bias/clamp in the
+  pipeline key and descriptor. The list version is 5; version 4 caches are
+  rebuilt. Existing version 3 prefix conversion initializes the appended
+  fields to zero. This prevents pipelines with different offsets from aliasing.
+- `patches/renut-deps/reblue-XenosRecomp-position-dots.patch`: carries reNut's
+  compensated position-dot calculation and dependency scan as a reproducible
+  dependency patch. The unmodified move-only scan produced a byte-identical
+  LoS cache, so the scan also follows LoS's lane-wise Add/Mul/Mad chains before
+  the position export. Only identified dot products use the helper; this is
+  not the earlier whole-output `precise` experiment. The helper preserves its
+  operation order with `precise`; its MoltenVK cost needs player evaluation.
+- Motion blur remains game-controlled and the velocity pass retains its
+  original EQUAL depth comparison. The separate depth-packing overflow and
+  broader renderer upgrades were not folded into this comparison.
+- Local build logs, shader-cache comparison, launcher and a copied save are
+  under ignored `out/renut-update-20261109`. The test bundle is
+  `out/ReNut Update.app`, launched through `out/ReNut Update.command`.
+  Release ARM64 build and the Cocoa/Vulkan platform smoke test passed. The
+  original deployment-target setting remains empty. All 2,006 shader entries
+  are present: 223 vertex shaders changed and all 1,634 pixel shaders are
+  byte-identical to the pre-experiment cache after decompression. The dependency
+  patch passes reverse-application checking; the packaged executable matches
+  the build by SHA-256. Existing `fpscr.h` width warnings remain.
+  Startup reached guest draws at 1280x720 on Vulkan/Apple M2; the log confirms
+  game-controlled engine values. Visual acceptance and performance are pending
+  the player's comparison of both scenes. The candidate uses an independent
+  copied profile.
+
 ## 2026-11-07: build-time FPS comparison experiment
 
 - `app/CMakeLists.txt`: added optional `LOS_FPS_EXPERIMENT` (default OFF),

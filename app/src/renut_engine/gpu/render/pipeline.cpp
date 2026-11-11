@@ -313,6 +313,8 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
     if (desc.depthEnabled && !desc.depthWriteEnabled && ((dc >> 4) & 7) == 7)
       desc.depthEnabled = false;
     desc.depthFunction = ConvertCompareFunction((dc >> 4) & 7);
+    desc.depthBias = key.depth_bias;
+    desc.depthBiasClamp = key.depth_bias_clamp;
     desc.stencilEnabled = dc & 1;
     desc.stencilReference = key.stencil_ref_mask & 0xFF;
     desc.stencilReadMask = (key.stencil_ref_mask >> 8) & 0xFF;
@@ -463,7 +465,7 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineKey &key, const Pipel
 constexpr char kListMagic[4] = {'R', 'N', 'P', 'L'};
 // banjo-nx: 2, the key's bool words (banjo_gpu_bool_spec); 3, output_trim; 4, alpha_func (a version 3 list is kept,
 // LoadList).
-constexpr u32 kListVersion = 4;
+constexpr u32 kListVersion = 5;  // LoS: depth bias and clamp appended to the key.
 constexpr u32 kListV3KeySize = 184;  // the key up to output_trim
 
 struct ListHeader {
@@ -711,7 +713,7 @@ std::vector<std::unique_ptr<Job>> LoadList() {
   const bool valid = header_ok && header.version == kListVersion && header.key_size == sizeof(PipelineKey);
   // banjo-nx (2026-10-18): a version 3 list (before alpha_func): its keys get the fields after output_trim as 0 (the
   // generic pipelines, which the specialised ones draw with until they are built), and the file is written again as
-  // version 4.
+  // the current version, with zero depth bias for these old prebuild records.
   const bool v3 = header_ok && header.version == 3 && header.key_size == kListV3KeySize;
   if (!valid && !v3) {
     std::error_code ec;
@@ -759,8 +761,8 @@ std::vector<std::unique_ptr<Job>> LoadList() {
     std::ofstream rewrite(path, std::ios::binary | std::ios::trunc);
     if (rewrite)
       rewrite.write(converted.data(), std::streamsize(converted.size()));
-    RGPU_INFO("Pipeline list {}: version 3, {} pipelines kept as version 4 (generic alpha test)", path.string(),
-              jobs.size());
+    RGPU_INFO("Pipeline list {}: version 3, {} pipelines kept as version {} (generic alpha test, zero bias)",
+              path.string(), jobs.size(), kListVersion);
   }
   // Records of shaders this build lacks stay out of 'listed': a later build
   // that has them lists the pipelines again.

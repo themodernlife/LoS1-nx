@@ -274,6 +274,11 @@ static_assert(offsetof(Device, m_TessellatorPacket) == 0x2964);
 static_assert(offsetof(Device, m_MiscPacket) == 0x29B8);
 static_assert(offsetof(Device, m_PointPacket) == 0x2A50);
 
+// LoS sub_824962E0 stores DepthBias in both words and sets ModeControl bits
+// 11/12. Verified against the local generated function; no new guest hook.
+constexpr u32 kDeviceOffsetDepthBiasFront = 0x2A54;
+constexpr u32 kDeviceOffsetDepthBiasBack = 0x2A5C;
+
 // CDevice-private fields Direct3D_CreateDevice initialises (byte offsets into
 // the allocation, from its decompilation at 0x8264DF28).
 // sa2-nx: SA2's sub_824AD9F8 and sub_8249AB48 (N&B 10888, 10892, 23980).

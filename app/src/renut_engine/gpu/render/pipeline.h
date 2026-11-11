@@ -83,6 +83,9 @@ struct PipelineKey {
   // pass alpha); 0 = read at run time. Like the bools: a key with it not built yet draws with the generic one (0).
   uint32_t alpha_func;
   uint32_t reserved;  // 0 (the key is compared and hashed as bytes)
+  // Append to preserve the prefix used by the legacy pipeline-list reader.
+  int32_t depth_bias;
+  float depth_bias_clamp;
 };
 
 // banjo-nx (banjo_gpu_blend_skip): for the key's other fields, 1 when its one target keeps its value for a source alpha

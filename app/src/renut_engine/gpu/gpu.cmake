@@ -229,6 +229,10 @@ function(renut_xenos_shader_cache TARGET)
     # copy (self-checked against the original), the second compiles them (BANJO_HLSL_OVERRIDE). The dumps are game
     # data (build tree only). OFF: one run, as before.
     option(BANJO_RENUT_EARLY_ALPHA "Early alpha copies in Renut's pixel shaders (tools/renut_early_alpha.py)" ON)
+    option(LOS_RENUT_DENSE_MOTION_BLUR "Experimental LoS motion blur: 21 samples over the original distance" OFF)
+    if(LOS_RENUT_DENSE_MOTION_BLUR AND NOT BANJO_RENUT_EARLY_ALPHA)
+        message(FATAL_ERROR "LOS_RENUT_DENSE_MOTION_BLUR requires BANJO_RENUT_EARLY_ALPHA's HLSL override workflow")
+    endif()
     set(early_alpha_dir "${RENUT_GPU_GEN_DIR}/early_alpha_hlsl")
     if(BANJO_RENUT_EARLY_ALPHA)
         set(early_alpha_commands
@@ -241,6 +245,12 @@ function(renut_xenos_shader_cache TARGET)
         set(early_alpha_env ${CMAKE_COMMAND} -E env "BANJO_HLSL_OVERRIDE=${early_alpha_dir}")
         set(early_alpha_depends "${CMAKE_SOURCE_DIR}/../tools/renut_early_alpha.py"
                                 "${CMAKE_SOURCE_DIR}/../tools/early_alpha.py")
+        if(LOS_RENUT_DENSE_MOTION_BLUR)
+            list(APPEND early_alpha_commands
+                COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/../tools/renut_dense_motion_blur.py"
+                        "${early_alpha_dir}")
+            list(APPEND early_alpha_depends "${CMAKE_SOURCE_DIR}/../tools/renut_dense_motion_blur.py")
+        endif()
     else()
         set(early_alpha_commands)
         set(early_alpha_env)
