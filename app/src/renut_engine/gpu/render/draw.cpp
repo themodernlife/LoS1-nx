@@ -20,6 +20,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <cstdlib>
+#include <cstdio>
 #include <vector>
 
 #include <plume_render_interface.h>
@@ -1508,6 +1509,51 @@ FloatConstants DrawFloatConstants(const u8 *state, const ReplayConstants *replay
     c.replay = c.dirty ? replay->replay : 0;
   }
   return c;
+}
+
+// Local motion-blur investigation. Opt-in snapshots every 120 frames; normal
+// launches do not read back images or write files. The caller creates the output
+// directory. Raw constants are guest registers, before shader literal overlays.
+const char *MotionDiagnosticDirectory() {
+  static const char *directory = std::getenv("LOS_MOTION_DIAG");
+  return directory && *directory ? directory : nullptr;
+}
+
+uint64_t g_motion_last_pixel_shader = 0;
+
+void MotionDiagnosticConstants(const FloatConstants &constants, uint64_t hash, bool pixel) {
+  const char *directory = MotionDiagnosticDirectory();
+  const uint64_t frame = TextureFrameLocked();
+  if (!directory || frame % 120)
+    return;
+  static uint64_t previous_frame = ~0ull;
+  static std::unordered_set<uint64_t> written;
+  if (previous_frame != frame) {
+    previous_frame = frame;
+    written.clear();
+  }
+  if (!written.insert(hash).second)
+    return;
+  float values[256][4];
+  for (u32 r = 0; r < 256; ++r) {
+    for (u32 c = 0; c < 4; ++c) {
+      u32 word;
+      std::memcpy(&word, constants.Register(r) + c * 4, sizeof(word));
+      values[r][c] = std::bit_cast<float>(std::byteswap(word));
+    }
+  }
+  const std::string path = fmt::format("{}/{}-{}-{:016X}.f32", directory, frame, pixel ? "ps" : "vs", hash);
+  if (FILE *file = std::fopen(path.c_str(), "wb")) {
+    const bool ok = std::fwrite(values, sizeof(values), 1, file) == 1;
+    std::fclose(file);
+    RGPU_INFO("[motion] frame {} constants {} saved {}", frame, path, ok);
+  }
+  if (pixel) {
+    const u32 count = hash == 0x7838FCCDD9A82460ull ? 16 : 1;
+    for (u32 r = 0; r < count; ++r)
+      RGPU_INFO("[motion] frame {} ps {:016X} c{} = {}, {}, {}, {}", frame, hash, r,
+                values[r][0], values[r][1], values[r][2], values[r][3]);
+  }
 }
 
 // Float constants go by groups of four registers (64 bytes): the unit m_Pending
@@ -3032,6 +3078,20 @@ PipelineKey MakeKey(const GuestDevice &device, const ShaderRecord *vs, const Sha
   key.blend_control[3] = cp.BlendControl3;
   key.color_mask = u32(dev.m_ValuesPacket.ColorMask) & 0xFFFF;
   key.depth_control = t.depth ? u32(cp.DepthControl) : 0;
+  // Diagnostic only: distinguish missing velocity fragments from bad velocity
+  // math. ALWAYS intentionally ignores occlusion and is not a rendering fix.
+  if (ps && ps->hash == 0xCFA9F37557D702F5ull && (key.depth_control & 2)) {
+    static const u32 motion_compare = [] {
+      const char *mode = std::getenv("LOS_MOTION_DEPTH_TEST");
+      const u32 compare = mode && std::strcmp(mode, "always") == 0 ? 7u
+                        : mode && std::strcmp(mode, "lequal") == 0 ? 3u : 2u;
+      if (compare != 2u)
+        RGPU_INFO("[motion] diagnostic velocity depth comparison {}", mode);
+      return compare;
+    }();
+    if (motion_compare != 2u && ((key.depth_control >> 4) & 7) == 2u)
+      key.depth_control = (key.depth_control & ~0x70u) | (motion_compare << 4);
+  }
   key.stencil_ref_mask = t.depth ? u32(dev.m_ValuesPacket.StencilRefMask) & 0xFFFFFF : 0;
   key.stencil_ref_mask_bf = t.depth ? u32(dev.m_ValuesPacket.StencilRefMaskBF) & 0xFFFFFF : 0;
   key.mode_control = u32(cp.ModeControl) & 0x7;
@@ -4125,6 +4185,21 @@ bool DrawStateLocked(const u8 *device_state, const DrawCall &call, const ReplayC
   // (WaitForExportsLocked may submit the list: before anything is recorded).
   const FloatConstants vs_constants = DrawFloatConstants(device_state, replay, false);
   const FloatConstants ps_constants = DrawFloatConstants(device_state, replay, true);
+  if (MotionDiagnosticDirectory()) {
+    g_motion_last_pixel_shader = ps ? ps->hash : 0;
+    if (ps && (ps->hash == 0x7838FCCDD9A82460ull || ps->hash == 0xCFA9F37557D702F5ull)) {
+      MotionDiagnosticConstants(ps_constants, ps->hash, true);
+      MotionDiagnosticConstants(vs_constants, vs->hash, false);
+      if (ps->hash == 0x7838FCCDD9A82460ull && TextureFrameLocked() % 120 == 0) {
+        for (u32 r = 0; r < 4; ++r) {
+          const TextureFetch fetch = DeviceTextureFetch(device.dev(), r);
+          RGPU_INFO("[motion] frame {} texture {} va {:08X} fetch {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}",
+                    TextureFrameLocked(), r, device.U32(d3d::kDeviceOffsetTextures + r * 4),
+                    fetch.dword[0], fetch.dword[1], fetch.dword[2], fetch.dword[3], fetch.dword[4], fetch.dword[5]);
+        }
+      }
+    }
+  }
   // banjo-nx (2026-10-19, render-thread proposal 4): the draw's memexport streams, gathered once here (they were
   // gathered for each pass of the loop below and again for the draw: the same constants each time).
   MemExportStream exports[kMaxMemExportStreams];
@@ -5510,6 +5585,23 @@ void ResolveStateLocked(const u8 *device_state, u32 flags, const ClearRect *sour
                         u32 dest_texture_va, const d3d::TextureFetchConstant *dest_format,
                         i32 dest_x, i32 dest_y, u32 dest_level, u32 dest_slice,
                         const float clear_color[4], float clear_depth, u32 clear_stencil) {
+  const char *motion_directory = MotionDiagnosticDirectory();
+  const uint64_t motion_frame = TextureFrameLocked();
+  static uint64_t motion_captured = ~0ull;
+  if (motion_directory && motion_frame % 120 == 0 && motion_captured != motion_frame &&
+      g_motion_last_pixel_shader == 0xCFA9F37557D702F5ull && (flags & 7) == 0) {
+    motion_captured = motion_frame;
+    u32 width = 1280, height = 720;
+    std::vector<u32> words;
+    if (ReadRenderTargetLocked(device_state, 0, width, height, words)) {
+      const std::string path = fmt::format("{}/{}-velocity-{}x{}.u32", motion_directory, motion_frame, width, height);
+      if (FILE *file = std::fopen(path.c_str(), "wb")) {
+        const bool ok = std::fwrite(words.data(), sizeof(u32), words.size(), file) == words.size();
+        std::fclose(file);
+        RGPU_INFO("[motion] frame {} velocity target saved {} {}", motion_frame, path, ok);
+      }
+    }
+  }
   auto &s = State();
   static const uint32_t kProfileLabel = gpu_profile::Label("resolves");
   gpu_profile::Mark(s, kProfileLabel);

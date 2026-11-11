@@ -1,0 +1,18 @@
+--- a/XenosRecomp/shader_recompiler.cpp
++++ b/XenosRecomp/shader_recompiler.cpp
+@@ -2230,7 +2230,15 @@
+         out += "\tin uint iInstanceId : SV_InstanceID,\n";
+     #endif
+ 
++    #ifdef RENUT_RECOMP
++        // LoS reuses scene depth with EQUAL when drawing object velocities. Keep
++        // position arithmetic invariant between the material and velocity
++        // shaders: independent contraction/reassociation can reject visible
++        // fragments and make motion blur fall back to camera velocity.
++        out += "\tout precise float4 oPos : SV_Position";
++    #else
+         out += "\tout float4 oPos : SV_Position";
++    #endif
+ 
+         for (auto& [usage, usageIndex] : INTERPOLATORS)
+             print(",\n\tout float4 o{0}{1} : {2}{1}", USAGE_VARIABLES[uint32_t(usage)], usageIndex, USAGE_SEMANTICS[uint32_t(usage)]);

@@ -2,6 +2,148 @@
 
 Newest first. Each entry: what was done, what was found, what is next.
 
+## 2026-11-10: preserve the stopped movement investigation
+
+- Commit the existing diagnostics, velocity depth-test experiment, position
+  precision candidate, and evidence on `codex/movement-artifacts`.
+- This preserves the stopped investigation without merging it into main.
+  No implementation code was changed, rebuilt, or newly validated here.
+- Existing isolated apps, profiles, and capture evidence remain local under
+  ignored paths. Earlier visual results retain their documented limitations.
+
+## 2026-11-09: build position-precision candidate with original depth testing
+
+- Added a candidate dependency patch marking Renut vertex position output
+  `precise`, targeting arithmetic differences between scene and velocity
+  shaders. Depth rejection is supported by the bypass experiment; compiler
+  arithmetic as its underlying cause remains a hypothesis.
+- Rebuilt an isolated shader cache with the equivalent HLSL change. All
+  2,006 shaders compiled with no fallbacks; comparison shows 372 changed
+  vertex shaders and all 1,634 pixel shaders unchanged. Cache compilation,
+  executable linking, and Vulkan startup passed. The vendor source in the
+  main checkout is unchanged; a full patched-generator build is still due.
+- Launched `out/Motion Precision.app` with normal game-controlled blur,
+  original EQUAL depth testing, and motion captures. Earlier player approval
+  applies to ALWAYS only, not this candidate. Requested separate acceptance
+  of Wargs and the horse-knockoff cutscene for the current build.
+- Documented exactly which changes belong to the off workaround, accepted
+  depth bypass, and unverified precision candidate. Regular app unchanged;
+  no production-fix claim, merge, commit, or push.
+
+## 2026-11-09: player accepts both scenes with velocity-depth bypass
+
+- Relaunched the same diagnostic at the player's request. `Motion Data.app`
+  `los_005.log` confirms normal game engine values and velocity depth ALWAYS.
+- Player reports "ok seems like both are ok now" for Wargs and the
+  horse-knockoff cutscene. Unlike the earlier blur-off workaround, this run
+  retains the blur pass and changes only its velocity pass's depth comparison.
+- This supports incorrect velocity depth rejection as the failure mechanism.
+  Depth precision versus geometry/transform mismatch is still unresolved;
+  ALWAYS also admits hidden geometry, so it is not a final occlusion-correct
+  fix. Keep the accepted diagnostic as a comparison for that repair.
+- Recorded the result in the investigation matrix. No regular-app changes,
+  merge, commit, or push. Existing diagnostic build passed compile/link;
+  this session changed documentation only.
+
+## 2026-11-09: capture motion inputs and investigate depth rejection
+
+- Normal-settings trace replay still fails both player checks. The trace
+  confirms a full-resolution velocity pass, resolve, and blur draw. It also
+  identifies EQUAL depth testing with depth writes disabled on the velocity pass.
+- Added environment-gated diagnostics to `render/draw.cpp`: raw constants,
+  XRGB velocity target readback every 120 frames, and a separate velocity-only
+  depth-comparison experiment. No default rendering behavior is changed.
+- Built the diagnostic draw object and linked an isolated executable using
+  existing main-build objects. Compilation and linking passed with the known
+  fpscr inline-assembly warning. Preserved the original test app and profile.
+  Direct launch succeeded after initial packaging/startup attempts failed.
+- Player completed the instrumented replay: 25 target captures and 132
+  constant snapshots. Camera matrices are approximately consistent, while
+  velocity coverage is unusually sparse in gameplay. Exact depth rejection
+  is a suspect, not a confirmed root cause. The readback omits true alpha.
+- Next: compare velocity coverage with its depth test bypassed. This is an
+  occlusion-breaking diagnostic, not a proposed final rendering fix. Details
+  and runtime provenance are in `docs/movement-artifacts.md` and ignored out/.
+
+## 2026-11-09: player accepts blur-off result for both target scenes
+
+- After the explicit Warg/cutscene comparison request, the player reports
+  "that looks perfect" for the forced-off run. Recorded a pass for Warg motion
+  and Gabriel's horse-knockoff cutscene tumble in the investigation matrix.
+- `los_008.log` confirms Vulkan/Renut and `RT_PixelMotionBlur: 1 -> 0`.
+  Preserved the working `out/Motion Blur Off.command` launcher and running
+  test setup. No further restart or regular-app configuration change.
+- This is a player-validated visual workaround in those scenes, not proof
+  of a root-cause renderer repair or full-game compatibility. No rebuild was
+  needed. Future renderer work should compare against this accepted output.
+
+## 2026-11-09: original-settings run also fails both visual checks
+
+- Player reports both Warg blur and the horse-knockoff cutscene tumble still
+  wrong with no override (`los_006.log` confirms the game's own values).
+  Forced-on alone cannot explain the artifacts. The prior good-Warg report
+  remains valid as a historical observation but has not been reproduced here.
+- Proceed to the first player-led forced-off run to isolate this blur pass.
+  Do not assign the repeated failure report to Off: it arrived before Off
+  was launched. Disabling blur is a diagnosis, not the acceptance criterion.
+
+## 2026-11-09: correct the cutscene target and original baseline
+
+- Player reports forced blur-on looks terrible for both Wargs and Gabriel's
+  tumble. Original configuration's Warg blur looked correct; the bad tumble
+  is the cutscene when Gabriel is knocked off the horse, not a gameplay dodge.
+  Corrected the investigation plan and recorded these as separate results.
+- Source inspection shows engine-test settings are forced at each Swap and
+  every 250 ms, so forced-on cannot stand for the original game-controlled
+  behavior. No transition-time switch values have yet been captured.
+- Verified the regular and diagnostic app executable/runtime/Xenos library
+  hashes match. Added a local Original launcher with no engine-test flags and
+  launched it to reproduce good Wargs and the bad cutscene before further
+  interventions. Original profile and regular app settings remain untouched.
+
+## 2026-11-09: prepare player-led motion-blur comparison
+
+- Player reported missing save progress. The test runtime mounted its copied
+  save successfully, but that copy was from November 7; the regular profile's
+  data.dat was newer (November 8) and had a different hash. Closed the test
+  app, backed up its profile under ignored `out/profile-backups`, refreshed
+  the copy from the regular profile, and verified every copied file by hash.
+  The original profile was not modified. Relaunched the blur-on baseline.
+- Expanded the investigation plan to require separate Warg-motion and
+  Gabriel-tumble results. Natural motion blur must be considered alongside
+  doubled outlines, detached trails, stretching, and persistence after motion.
+- Launch the existing isolated Renut app with motion blur explicitly enabled
+  and automatic cycling disabled for the first player verification. The next
+  run disables only motion blur; Xenos is a conditional reference comparison.
+- This uses the copied November 7 binary and profile, not a new source build.
+  No renderer changes or visual-success claims are made pending player reports.
+- Startup log inspection caught empty CLI assignments consuming the following
+  option (`los_003.log` showed the phase spec `--los_engine_vars_ab=0`). Fixed
+  all three local launchers to omit empty arguments and reset the diagnostic
+  app's three engine-test config keys to empty/zero defaults. Restarted the
+  baseline; the regular app's configuration is untouched.
+
+## 2026-11-07: isolate movement-trail investigation
+
+- Created `codex/movement-artifacts` from committed fork main in a separate
+  worktree, leaving the main checkout's concurrent edits and Metal worktree
+  untouched.
+- Reused the existing packaged executable in an isolated local app with a
+  separate profile and logs. Live Renut startup confirmed Vulkan on Apple M2,
+  1280x720, and the game's `RT_PixelMotionBlur` integer switch enabled by
+  default. Existing shader metadata and generated HLSL identify the velocity
+  and eleven-sample motion-blur passes.
+- Added `docs/movement-artifacts.md` to record the evidence, limitations, and
+  reproducible on/off settings. Local-only launchers select each comparison
+  mode without editing the regular app. This is a configuration diagnosis;
+  no renderer or game translation code was changed and no rebuild was needed.
+- Validation: the isolated runtime logged the switch changing from 1 to 0
+  and cycling back to original values; startup/menu rendering continued.
+  Local launcher shell syntax and `git diff --check` passed. Phase FPS is
+  not a benchmark because scenes changed and another game was active.
+- Next: verify the reported running trail in the same scene with the pass
+  enabled and disabled, then inspect its velocity inputs if implicated.
+
 ## 2026-11-07: move experimentation to the fork's main branch
 
 - Closed upstream draft PR #3 and the superseded fork draft PR #1 at the
